@@ -88,6 +88,8 @@ Cemu emulates an SD card using the `sdcard` directory in the Cemu root folder. P
 
 The Cemu filesystem path is the host-side `Cemu/sdcard/` folder (or the equivalent `sdcard/` under your portable Cemu root); the app itself continues to see `fs:/vol/external01/`. The current project is cross-build-tested, but it has **not** been claimed as hardware-tested unless someone runs it on console/Cemu and reports the results.
 
+If the app closes Cemu or fails during startup, check `sdcard/wiiu/apps/PS1WiiU/boot.log` on the host. The app rewrites this log each launch and records milestones around Wii U process setup, screen setup, audio initialization, and PCSX-ReARMed initialization. Share the log contents when reporting a crash; the final line helps identify which initialization stage did not return. For Cemu diagnosis, use the `.rpx` with **File → Load** first so the test avoids the WUHB bundle/title-loading path. A successful build alone does not prove the RPX or WUHB can run in a particular Cemu version.
+
 ## GamePad controls
 
 | Wii U GamePad | PlayStation input |
