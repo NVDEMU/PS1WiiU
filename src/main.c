@@ -128,6 +128,7 @@ static char g_memory_card_path[MAX_ROM_PATH] = "";
 static char g_state_path[MAX_ROM_PATH] = "";
 static uint32_t g_last_card_hash = 0;
 static unsigned g_autosave_frames = 0;
+static unsigned g_debug_run_trace_count = 0;
 static char g_track_references[MAX_REFERENCED_FILES][MAX_ROM_PATH];
 static unsigned g_track_reference_count = 0;
 static char g_playlist_references[MAX_REFERENCED_FILES][MAX_ROM_PATH];
@@ -1368,19 +1369,27 @@ static void launch_selected_game(void)
 
     /* Request the DualShock profile so PCSX-ReARMed actually polls both
      * analog sticks instead of leaving the virtual pad in digital-only mode. */
+    boot_log("game launch: preparing '%s'", g_current_game_path);
     retro_set_controller_port_device(0, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1));
     game.path = g_current_game_path;
+    boot_log("game launch: before retro_load_game");
     if (!retro_load_game(&game)) {
+        boot_log("game launch: retro_load_game returned false");
         set_status("Could not load %s. Check the image and BIOS settings.", g_current_game_label);
         g_current_game_path[0] = '\0';
         g_current_game_label[0] = '\0';
         return;
     }
 
+    boot_log("game launch: retro_load_game succeeded");
     g_game_loaded = true;
     g_mode = SCREEN_GAME;
+    boot_log("game launch: before load_memory_card");
     load_memory_card();
+    boot_log("game launch: after load_memory_card");
+    boot_log("game launch: before retro_get_system_av_info");
     retro_get_system_av_info(&av_info);
+    boot_log("game launch: after retro_get_system_av_info, sample_rate=%.2f", av_info.timing.sample_rate);
     if (av_info.timing.sample_rate > 0.0) {
         audio_set_sample_rate((unsigned)av_info.timing.sample_rate);
     }
@@ -1550,7 +1559,14 @@ int main(void)
             }
 
             if (g_mode == SCREEN_GAME && g_game_loaded) {
+                if (g_debug_run_trace_count < 5) {
+                    boot_log("game loop: before retro_run #%u", g_debug_run_trace_count + 1);
+                }
                 retro_run();
+                if (g_debug_run_trace_count < 5) {
+                    boot_log("game loop: after retro_run #%u", g_debug_run_trace_count + 1);
+                }
+                ++g_debug_run_trace_count;
                 if ((++g_autosave_frames % 120u) == 0u) {
                     save_memory_card(false);
                 }
