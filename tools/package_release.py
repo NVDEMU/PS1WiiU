@@ -40,12 +40,12 @@ for name in ("PS1WiiU.wuhb", "PS1WiiU.rpx"):
     data = built.read_bytes()
     if len(data) < 512 * 1024:
         raise SystemExit(f"Suspiciously small {name}: {len(data)} bytes (expected at least 512 KiB)")
-    if name.endswith(".rpx") and not data.startswith(b"\\x7fELF"):
+    if name.endswith(".rpx") and not data.startswith(b"\x7fELF"):
         raise SystemExit(f"Invalid RPX header in {built}")
     if name.endswith(".wuhb"):
         if not data.startswith(b"WUHB"):
             raise SystemExit(f"Invalid WUHB header in {built}")
-        if b"\\x7fELF" not in data[:4096]:
+        if b"\x7fELF" not in data[:4096]:
             raise SystemExit(f"WUHB does not contain an embedded RPX ELF near its header: {built}")
     built_files[name] = len(data)
     shutil.copy2(built, app_dir / name)
