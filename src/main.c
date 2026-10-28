@@ -205,6 +205,12 @@ static void boot_log(const char *fmt, ...)
     fclose(fp);
 }
 
+/* Called by the statically linked PCSX-ReARMed core during early startup. */
+void ps1wiiu_core_trace(const char *message)
+{
+    boot_log("core: %s", message ? message : "(null)");
+}
+
 static void set_status(const char *fmt, ...)
 {
     va_list args;
