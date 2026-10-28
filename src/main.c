@@ -1460,15 +1460,20 @@ int main(void)
     frame_budget = OSMillisecondsToTicks(16);
     while (WHBProcIsRunning()) {
         uint64_t start = OSGetTime();
-        const uint32_t hold = (uint32_t)g_vpad.hold;
+        uint32_t hold;
         const uint32_t save_mask = VPAD_BUTTON_ZL | VPAD_BUTTON_ZR | VPAD_BUTTON_PLUS;
         const uint32_t load_mask = VPAD_BUTTON_ZL | VPAD_BUTTON_ZR | VPAD_BUTTON_MINUS;
         const uint32_t exit_mask = VPAD_BUTTON_L | VPAD_BUTTON_R | VPAD_BUTTON_MINUS;
-        const bool save_down = (hold & save_mask) == save_mask;
-        const bool load_down = (hold & load_mask) == load_mask;
-        const bool exit_down = (hold & exit_mask) == exit_mask;
+        bool save_down;
+        bool load_down;
+        bool exit_down;
 
         VPADRead(VPAD_CHAN_0, &g_vpad, 1, &g_vpad_error);
+        hold = (uint32_t)g_vpad.hold;
+        save_down = (hold & save_mask) == save_mask;
+        load_down = (hold & load_mask) == load_mask;
+        exit_down = (hold & exit_mask) == exit_mask;
+
         if (g_mode == SCREEN_GAME && g_game_loaded) {
             g_suppress_game_input = save_down || load_down || exit_down;
 
