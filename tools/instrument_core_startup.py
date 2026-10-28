@@ -347,6 +347,173 @@ def instrument_lightrec_map() -> None:
     )
     path.write_text(text, encoding="utf-8")
 
+
+def patch_cemu_software_map_fallback() -> None:
+    """Keep the real Wii U fast mapping, but fall back to software maps when Cemu lacks the mapping-range API."""
+    mem_h = CORE / "libpcsxcore" / "lightrec" / "mem.h"
+    text = mem_h.read_text(encoding="utf-8")
+    if "LIGHTREC_CUSTOM_MAP_ACTIVE" not in text:
+        text = replace_once(
+            text,
+            "extern void *code_buffer;\n",
+            "extern void *code_buffer;\n\n"
+            "#ifdef HW_WUP\n"
+            "/* Runtime status: false means the Wii U custom memory map failed and software maps are active. */\n"
+            "extern int lightrec_custom_map_active;\n"
+            "#define LIGHTREC_CUSTOM_MAP_ACTIVE lightrec_custom_map_active\n"
+            "#else\n"
+            "#define LIGHTREC_CUSTOM_MAP_ACTIVE LIGHTREC_CUSTOM_MAP\n"
+            "#endif\n",
+            "runtime custom-map status declaration"
+        )
+        mem_h.write_text(text, encoding="utf-8")
+
+    wiiu_mem = CORE / "libpcsxcore" / "lightrec" / "mem_wiiu.c"
+    text = wiiu_mem.read_text(encoding="utf-8")
+    if "int lightrec_custom_map_active = 0;" not in text:
+        text = replace_once(
+            text,
+            "void wiiu_clear_cache(void *start, void *end);\n",
+            "void wiiu_clear_cache(void *start, void *end);\n\n"
+            "int lightrec_custom_map_active = 0;\n",
+            "runtime custom-map status definition"
+        )
+        wiiu_mem.write_text(text, encoding="utf-8")
+
+    psxmem = CORE / "libpcsxcore" / "psxmem.c"
+    text = psxmem.read_text(encoding="utf-8")
+    if "psxMemInit: using software memory maps after custom map failure" not in text:
+        text = replace_once(
+            text,
+            "ptr = psxMap(0x80000000, 0x00210000, 1, MAP_TAG_RAM);",
+            "#ifdef HW_WUP\n"
+            "\t/* The Wii U heap-backed fallback cannot satisfy an exact-address allocation. */\n"
+            "\tptr = psxMap(0x80000000, 0x00210000, lightrec_custom_map_active ? 1 : 0, MAP_TAG_RAM);\n"
+            "#else\n"
+            "\tptr = psxMap(0x80000000, 0x00210000, 1, MAP_TAG_RAM);\n"
+            "#endif",
+            "heap-backed RAM mapping fallback"
+        )
+        text = replace_once(
+            text,
+            "\tps1wiiu_core_trace(\"psxMemInit: before memory-map backend\");\n"
+            "\tif (LIGHTREC_CUSTOM_MAP)\n"
+            "\t\tret = lightrec_init_mmap();\n"
+            "\telse\n"
+            "\t\tret = psxMemInitMap();\n"
+            "\tps1wiiu_core_trace(\"psxMemInit: returned from memory-map backend\");\n",
+            "\tps1wiiu_core_trace(\"psxMemInit: before memory-map backend\");\n"
+            "#ifdef HW_WUP\n"
+            "\tif (LIGHTREC_CUSTOM_MAP) {\n"
+            "\t\tlightrec_custom_map_active = 1;\n"
+            "\t\tret = lightrec_init_mmap();\n"
+            "\t\tif (ret) {\n"
+            "\t\t\t/* Failed custom-map setup has already unmapped its partial mappings. */\n"
+            "\t\t\tlightrec_custom_map_active = 0;\n"
+            "\t\t\tpsxRegs.ptrs.psxM = NULL;\n"
+            "\t\t\tpsxRegs.ptrs.psxP = NULL;\n"
+            "\t\t\tpsxRegs.ptrs.psxH = NULL;\n"
+            "\t\t\tpsxRegs.ptrs.psxR = NULL;\n"
+            "\t\t\tps1wiiu_core_trace(\"psxMemInit: using software memory maps after custom map failure\");\n"
+            "\t\t\tret = psxMemInitMap();\n"
+            "\t\t}\n"
+            "\t} else {\n"
+            "\t\tlightrec_custom_map_active = 0;\n"
+            "\t\tret = psxMemInitMap();\n"
+            "\t}\n"
+            "#else\n"
+            "\tif (LIGHTREC_CUSTOM_MAP)\n"
+            "\t\tret = lightrec_init_mmap();\n"
+            "\telse\n"
+            "\t\tret = psxMemInitMap();\n"
+            "#endif\n"
+            "\tps1wiiu_core_trace(\"psxMemInit: returned from memory-map backend\");\n",
+            "runtime fallback after custom memory-map failure"
+        )
+        text = replace_once(
+            text,
+            "void psxMemShutdown() {\n"
+            "\tif (LIGHTREC_CUSTOM_MAP)\n"
+            "\t\tlightrec_free_mmap();\n"
+            "\telse\n"
+            "\t\tpsxMemFreeMap();\n",
+            "void psxMemShutdown() {\n"
+            "\tif (LIGHTREC_CUSTOM_MAP_ACTIVE)\n"
+            "\t\tlightrec_free_mmap();\n"
+            "\telse\n"
+            "\t\tpsxMemFreeMap();\n",
+            "runtime custom-map shutdown"
+        )
+        psxmem.write_text(text, encoding="utf-8")
+
+    plugin = CORE / "libpcsxcore" / "lightrec" / "plugin.c"
+    text = plugin.read_text(encoding="utf-8")
+    if "Cemu fallback retains Wii U executable code buffer" not in text:
+        # This file is only patched in the Wii U build script; preserve all other platform code paths.
+        text = replace_once(
+            text,
+            "#include <stdbool.h>\n",
+            "#include <stdbool.h>\n#include <stdint.h>\n",
+            "Wii U runtime code-buffer pointer declaration"
+        )
+        text = text.replace("LIGHTREC_CUSTOM_MAP", "LIGHTREC_CUSTOM_MAP_ACTIVE")
+        text = replace_once(
+            text,
+            "\tif (!LIGHTREC_CUSTOM_MAP_ACTIVE) {\n"
+            "#if P_HAVE_MMAP\n"
+            "\t\tcode_buffer = mmap(0, CODE_BUFFER_SIZE,\n"
+            "\t\t\t\t   PROT_EXEC | PROT_READ | PROT_WRITE,\n"
+            "\t\t\t\t   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
+            "\t\tif (code_buffer == MAP_FAILED)\n"
+            "\t\t\treturn -ENOMEM;\n"
+            "#else\n"
+            "\t\tcode_buffer = malloc(CODE_BUFFER_SIZE);\n"
+            "\t\tif (!code_buffer)\n"
+            "\t\t\treturn -ENOMEM;\n"
+            "#endif\n"
+            "\t}\n",
+            "\tif (!LIGHTREC_CUSTOM_MAP_ACTIVE) {\n"
+            "#ifdef HW_WUP\n"
+            "\t\t/* Cemu fallback still needs the Wii U executable/JIT region. */\n"
+            "\t\tcode_buffer = (void *)(uintptr_t)WUP_RWX_MEM_BASE;\n"
+            "#else\n"
+            "#if P_HAVE_MMAP\n"
+            "\t\tcode_buffer = mmap(0, CODE_BUFFER_SIZE,\n"
+            "\t\t\t\t   PROT_EXEC | PROT_READ | PROT_WRITE,\n"
+            "\t\t\t\t   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
+            "\t\tif (code_buffer == MAP_FAILED)\n"
+            "\t\t\treturn -ENOMEM;\n"
+            "#else\n"
+            "\t\tcode_buffer = malloc(CODE_BUFFER_SIZE);\n"
+            "\t\tif (!code_buffer)\n"
+            "\t\t\treturn -ENOMEM;\n"
+            "#endif\n"
+            "#endif\n"
+            "\t}\n",
+            "Cemu fallback retains Wii U executable code buffer"
+        )
+        text = replace_once(
+            text,
+            "\tif (!LIGHTREC_CUSTOM_MAP_ACTIVE) {\n"
+            "#if P_HAVE_MMAP\n"
+            "\t\tmunmap(code_buffer, CODE_BUFFER_SIZE);\n"
+            "#else\n"
+            "\t\tfree(code_buffer);\n"
+            "#endif\n"
+            "\t}\n",
+            "\tif (!LIGHTREC_CUSTOM_MAP_ACTIVE) {\n"
+            "#ifndef HW_WUP\n"
+            "#if P_HAVE_MMAP\n"
+            "\t\tmunmap(code_buffer, CODE_BUFFER_SIZE);\n"
+            "#else\n"
+            "\t\tfree(code_buffer);\n"
+            "#endif\n"
+            "#endif\n"
+            "\t}\n",
+            "do not free the fixed Wii U executable code buffer"
+        )
+        plugin.write_text(text, encoding="utf-8")
+
 if not LIBRETRO.is_file() or not MAIN.is_file():
     raise SystemExit("PCSX-ReARMed source files are missing; check out submodules first.")
 
@@ -355,4 +522,5 @@ instrument_main()
 instrument_psxinit()
 instrument_psxmem()
 instrument_lightrec_map()
-print("PCSX-ReARMed startup instrumentation is ready")
+patch_cemu_software_map_fallback()
+print("PCSX-ReARMed startup instrumentation and Cemu fallback are ready")
