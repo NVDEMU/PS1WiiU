@@ -24,6 +24,14 @@ for folder in ("games", "bios", "saves", "memcards", "screenshots"):
 readme = ROOT / "README.md"
 shutil.copy2(readme, STAGE / "README.txt")
 
+for source_name, target_name in (
+    ("COPYING", "COPYING.txt"),
+    ("THIRD_PARTY_NOTICES.txt", "THIRD_PARTY_NOTICES.txt"),
+):
+    source = ROOT / source_name
+    if source.is_file():
+        shutil.copy2(source, STAGE / target_name)
+
 for name in ("PS1WiiU.wuhb", "PS1WiiU.rpx"):
     built = BUILD / name
     if built.is_file():
