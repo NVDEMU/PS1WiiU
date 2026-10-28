@@ -34,15 +34,29 @@ for source_name, target_name in (
 
 for name in ("PS1WiiU.wuhb", "PS1WiiU.rpx"):
     built = BUILD / name
-    if built.is_file():
-        shutil.copy2(built, app_dir / name)
-
-if not (app_dir / "PS1WiiU.wuhb").exists() and not (app_dir / "PS1WiiU.rpx").exists():
-    raise SystemExit("No PS1WiiU.wuhb or PS1WiiU.rpx found in build/")
+    if not built.is_file():
+        raise SystemExit(f"Missing required build output: {built}")
+    shutil.copy2(built, app_dir / name)
 
 with zipfile.ZipFile(ARCHIVE, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for path in sorted(STAGE.rglob("*")):
         if path.is_file():
             archive.write(path, path.relative_to(STAGE))
 
-print(f"Packaged {ARCHIVE} (ZIP root contains wiiu/ for direct SD-card extraction)")
+with zipfile.ZipFile(ARCHIVE, "r") as archive:
+    names = set(archive.namelist())
+    required = {
+        "wiiu/apps/PS1WiiU.wuhb",
+        "wiiu/apps/PS1WiiU.rpx",
+        "wiiu/apps/PS1WiiU/games/.gitkeep",
+        "wiiu/apps/PS1WiiU/bios/.gitkeep",
+        "wiiu/apps/PS1WiiU/memcards/.gitkeep",
+        "wiiu/apps/PS1WiiU/states/.gitkeep",
+    }
+    missing = required - names
+    if missing:
+        raise SystemExit(f"SD-card ZIP is incomplete; missing: {sorted(missing)}")
+    if any(name.startswith("PS1WiiU-SD/") for name in names):
+        raise SystemExit("ZIP has an extra PS1WiiU-SD/ wrapper; extract it to the SD root instead.")
+
+print(f"Packaged and verified {ARCHIVE} (ZIP root contains wiiu/ for direct SD-card extraction)")

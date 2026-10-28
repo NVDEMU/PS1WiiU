@@ -1031,7 +1031,8 @@ static void draw_menu(void)
         snprintf(text, sizeof(text), "Games: %u / %u", g_rom_count, MAX_ROMS);
         draw_next_both(text, &line);
         if (g_rom_count == 0) {
-            draw_next_both("Place your own .cue, .chd, .pbp, .iso or .img files in:", &line);
+            draw_next_both("Supported: BIN/CUE, CHD, PBP, ISO, IMG, MDF,", &line);
+            draw_next_both("TOC, CBN, M3U, and PS-X EXE formats.", &line);
             draw_next_both(GAMES_DIR, &line);
             draw_next_both("Press Y to scan again.", &line);
         } else {
