@@ -1,0 +1,11 @@
+diff --git a/Makefile.libretro b/Makefile.libretro
+--- a/Makefile.libretro
++++ b/Makefile.libretro
+@@ -398,6 +398,7 @@ else ifneq (,$(filter $(platform),ngc wii wiiu))
+ 	else ifeq ($(platform), wiiu)
+ 		# -mwup was removed in newer devkitPPC versions
+ 		CFLAGS += -DHW_WUP -D__wiiu__
++		NEED_SYSCONF := 1
+ 		CFLAGS += -I frontend/wiiu
+ 		CFLAGS += -DZ7_DECL_Int32_AS_long
+ 		CFLAGS += -Wno-format
