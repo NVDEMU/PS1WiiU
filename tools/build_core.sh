@@ -26,4 +26,6 @@ apply_patch_idempotently() {
 apply_patch_idempotently "$POINTER_PATCH"
 apply_patch_idempotently "$SYSCONF_PATCH"
 
+python3 "$ROOT/tools/instrument_core_startup.py"
+
 make -C "$CORE" -f Makefile.libretro platform=wiiu
