@@ -83,7 +83,7 @@ Install devkitPro's Wii U toolchain and WUT, then clone recursively so the core 
 ```sh
 git clone --recurse-submodules https://github.com/NVDEMU/PS1WiiU.git
 cd PS1WiiU
-make -C vendor/pcsx_rearmed -f Makefile.libretro platform=wiiu
+./tools/build_core.sh
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/WiiU.cmake" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 python3 tools/package_release.py
