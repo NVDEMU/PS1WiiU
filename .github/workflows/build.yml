@@ -17,6 +17,11 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build PCSX-ReARMed core for Wii U
+        run: make -C vendor/pcsx_rearmed -f Makefile.libretro platform=wiiu
 
       - name: Configure WUT build
         run: |
@@ -45,7 +50,7 @@ jobs:
         with:
           tag_name: Nightly
           name: Nightly
-          body: "Automated development build from the latest main commit. The emulator core is still under development."
+          body: "Automated development build from the latest main commit. Experimental PS1 emulation frontend; BIOS and game images must be supplied by the user."
           prerelease: true
           make_latest: false
           overwrite_files: true
