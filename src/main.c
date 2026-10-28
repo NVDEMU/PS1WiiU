@@ -25,13 +25,20 @@
 
 #include <libretro.h>
 
-#define APP_DIR       "fs:/vol/external01/wiiu/apps/PS1WiiU"
+/* On hardware this volume is the SD card. Cemu maps <Cemu root>/sdcard
+ * to the same fs:/vol/external01 volume, so both environments share this layout. */
+#define SD_ROOT       "fs:/vol/external01"
+#define APP_DIR       SD_ROOT "/wiiu/apps/PS1WiiU"
 #define GAMES_DIR     APP_DIR "/games"
 #define BIOS_DIR      APP_DIR "/bios"
 #define SAVES_DIR     APP_DIR "/saves"
 #define MEMCARDS_DIR  APP_DIR "/memcards"
+#define STATES_DIR    APP_DIR "/states"
 #define SCREENSHOTS_DIR APP_DIR "/screenshots"
 #define SETTINGS_PATH APP_DIR "/settings.cfg"
+
+#define MAX_REFERENCED_FILES 1024
+#define MAX_SCAN_DEPTH 4
 
 #define MAX_ROMS 256
 #define MAX_ROM_NAME 256
@@ -59,6 +66,12 @@ void retro_unload_game(void);
 void retro_run(void);
 void retro_reset(void);
 void retro_get_system_av_info(struct retro_system_av_info *info);
+void retro_set_controller_port_device(unsigned port, unsigned device);
+void *retro_get_memory_data(unsigned id);
+size_t retro_get_memory_size(unsigned id);
+size_t retro_serialize_size(void);
+bool retro_serialize(void *data, size_t size);
+bool retro_unserialize(const void *data, size_t size);
 
 typedef struct CoreOption {
     const char *key;
@@ -105,6 +118,19 @@ static unsigned g_rom_selected = 0;
 static unsigned g_setting_selected = 0;
 static bool g_game_loaded = false;
 static bool g_core_variables_changed = true;
+static bool g_suppress_game_input = false;
+static bool g_save_combo_was_down = false;
+static bool g_load_combo_was_down = false;
+static char g_current_game_path[MAX_ROM_PATH] = "";
+static char g_current_game_label[MAX_ROM_NAME] = "";
+static char g_memory_card_path[MAX_ROM_PATH] = "";
+static char g_state_path[MAX_ROM_PATH] = "";
+static uint32_t g_last_card_hash = 0;
+static unsigned g_autosave_frames = 0;
+static char g_track_references[MAX_REFERENCED_FILES][MAX_ROM_PATH];
+static unsigned g_track_reference_count = 0;
+static char g_playlist_references[MAX_REFERENCED_FILES][MAX_ROM_PATH];
+static unsigned g_playlist_reference_count = 0;
 static enum retro_pixel_format g_pixel_format = RETRO_PIXEL_FORMAT_XRGB8888;
 static char g_status[192] = "Ready. Copy your own PS1 images into games/.";
 static char g_message[192] = "";
@@ -164,6 +190,16 @@ static void set_status(const char *fmt, ...)
     va_end(args);
 }
 
+static void show_message(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(g_message, sizeof(g_message), fmt, args);
+    va_end(args);
+    g_message_frames = 180;
+    set_status("%s", g_message);
+}
+
 static void core_log(enum retro_log_level level, const char *fmt, ...)
 {
     char message[384];
@@ -189,6 +225,7 @@ static void ensure_storage_layout(void)
     ensure_directory(BIOS_DIR);
     ensure_directory(SAVES_DIR);
     ensure_directory(MEMCARDS_DIR);
+    ensure_directory(STATES_DIR);
     ensure_directory(SCREENSHOTS_DIR);
 }
 
@@ -268,11 +305,18 @@ static bool ends_with_case(const char *text, const char *suffix)
 
 static bool is_supported_image(const char *name)
 {
-    return ends_with_case(name, ".cue") ||
-           ends_with_case(name, ".chd") ||
+    /* Matches PCSX-ReARMed's advertised valid_extensions list. */
+    return ends_with_case(name, ".bin") ||
+           ends_with_case(name, ".cue") ||
+           ends_with_case(name, ".img") ||
+           ends_with_case(name, ".mdf") ||
            ends_with_case(name, ".pbp") ||
+           ends_with_case(name, ".toc") ||
+           ends_with_case(name, ".cbn") ||
+           ends_with_case(name, ".m3u") ||
+           ends_with_case(name, ".chd") ||
            ends_with_case(name, ".iso") ||
-           ends_with_case(name, ".img");
+           ends_with_case(name, ".exe");
 }
 
 static int compare_roms(const void *a, const void *b)
@@ -282,38 +326,251 @@ static int compare_roms(const void *a, const void *b)
     return strcasecmp(ra->name, rb->name);
 }
 
+static bool is_playlist(const char *path)
+{
+    return ends_with_case(path, ".m3u");
+}
+
+static bool is_cue_sheet(const char *path)
+{
+    return ends_with_case(path, ".cue");
+}
+
+static bool is_data_track_extension(const char *path)
+{
+    return ends_with_case(path, ".bin") ||
+           ends_with_case(path, ".img") ||
+           ends_with_case(path, ".iso") ||
+           ends_with_case(path, ".mdf") ||
+           ends_with_case(path, ".toc");
+}
+
+static void normalize_reference_token(char *token)
+{
+    size_t i;
+    size_t len;
+    for (i = 0; token[i] != '\0'; ++i) {
+        if (token[i] == '\\') token[i] = '/';
+    }
+    len = strlen(token);
+    while (len > 0 && (token[len - 1] == '\r' || token[len - 1] == '\n' ||
+                       token[len - 1] == ' ' || token[len - 1] == '\t')) {
+        token[--len] = '\0';
+    }
+    while (token[0] == ' ' || token[0] == '\t') {
+        memmove(token, token + 1, strlen(token));
+    }
+    while (strncmp(token, "./", 2) == 0) {
+        memmove(token, token + 2, strlen(token + 2) + 1);
+    }
+}
+
+static void resolve_reference_path(const char *owner_path, const char *token,
+                                   char *out, size_t out_size)
+{
+    const char *slash;
+    char directory[MAX_ROM_PATH];
+    size_t dir_len;
+    char clean_token[MAX_ROM_PATH];
+
+    snprintf(clean_token, sizeof(clean_token), "%s", token);
+    normalize_reference_token(clean_token);
+    if (clean_token[0] == '\0') {
+        out[0] = '\0';
+        return;
+    }
+
+    /* A full Wii U filesystem path is accepted, though normal CUE/M3U files
+     * should use paths relative to the file that contains the reference. */
+    if (strstr(clean_token, "fs:/") == clean_token ||
+        strstr(clean_token, "sd:/") == clean_token) {
+        snprintf(out, out_size, "%s", clean_token);
+        return;
+    }
+
+    snprintf(directory, sizeof(directory), "%s", owner_path);
+    slash = strrchr(directory, '/');
+    if (!slash) {
+        out[0] = '\0';
+        return;
+    }
+    dir_len = (size_t)(slash - directory);
+    directory[dir_len] = '\0';
+    snprintf(out, out_size, "%s/%s", directory, clean_token);
+}
+
+static void add_reference(char refs[MAX_REFERENCED_FILES][MAX_ROM_PATH],
+                          unsigned *ref_count, const char *owner_path,
+                          const char *token)
+{
+    char resolved[MAX_ROM_PATH];
+    unsigned i;
+    resolve_reference_path(owner_path, token, resolved, sizeof(resolved));
+    if (resolved[0] == '\0') return;
+
+    for (i = 0; i < *ref_count; ++i) {
+        if (strcasecmp(refs[i], resolved) == 0) return;
+    }
+    if (*ref_count >= MAX_REFERENCED_FILES) return;
+    snprintf(refs[*ref_count], MAX_ROM_PATH, "%s", resolved);
+    ++(*ref_count);
+}
+
+static void collect_cue_references(const char *cue_path)
+{
+    FILE *fp = fopen(cue_path, "r");
+    char line[1024];
+    if (!fp) return;
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *p = line;
+        char token[MAX_ROM_PATH];
+        size_t len = 0;
+
+        while (*p == ' ' || *p == '\t') ++p;
+        if (strncasecmp(p, "FILE", 4) != 0 ||
+            (p[4] != ' ' && p[4] != '\t')) continue;
+        p += 4;
+        while (*p == ' ' || *p == '\t') ++p;
+
+        if (*p == '"') {
+            ++p;
+            while (*p && *p != '"' && len + 1 < sizeof(token)) {
+                token[len++] = *p++;
+            }
+        } else {
+            while (*p && *p != ' ' && *p != '\t' &&
+                   *p != '\r' && *p != '\n' && len + 1 < sizeof(token)) {
+                token[len++] = *p++;
+            }
+        }
+        token[len] = '\0';
+        if (len > 0) {
+            add_reference(g_track_references, &g_track_reference_count,
+                          cue_path, token);
+        }
+    }
+    fclose(fp);
+}
+
+static void collect_playlist_references(const char *playlist_path)
+{
+    FILE *fp = fopen(playlist_path, "r");
+    char line[MAX_ROM_PATH];
+    if (!fp) return;
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *p = line;
+        normalize_reference_token(p);
+        if (p[0] == '\0' || p[0] == '#') continue;
+        add_reference(g_playlist_references, &g_playlist_reference_count,
+                      playlist_path, p);
+    }
+    fclose(fp);
+}
+
+static void collect_references_recursive(const char *directory, unsigned depth)
+{
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    if (!dir) return;
+
+    while ((entry = readdir(dir)) != NULL) {
+        struct stat st;
+        char path[MAX_ROM_PATH];
+        if (entry->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name) >= (int)sizeof(path)) {
+            continue;
+        }
+        if (stat(path, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (depth < MAX_SCAN_DEPTH) collect_references_recursive(path, depth + 1);
+        } else if (is_cue_sheet(path)) {
+            collect_cue_references(path);
+        } else if (is_playlist(path)) {
+            collect_playlist_references(path);
+        }
+    }
+    closedir(dir);
+}
+
+static bool path_is_referenced(const char *path,
+                               char refs[MAX_REFERENCED_FILES][MAX_ROM_PATH],
+                               unsigned ref_count)
+{
+    unsigned i;
+    for (i = 0; i < ref_count; ++i) {
+        if (strcasecmp(path, refs[i]) == 0) return true;
+    }
+    return false;
+}
+
+static void scan_games_recursive(const char *directory, unsigned depth)
+{
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    if (!dir) return;
+
+    while ((entry = readdir(dir)) != NULL && g_rom_count < MAX_ROMS) {
+        struct stat st;
+        char path[MAX_ROM_PATH];
+        RomEntry *rom;
+
+        if (entry->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name) >= (int)sizeof(path)) {
+            continue;
+        }
+        if (stat(path, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            if (depth < MAX_SCAN_DEPTH) scan_games_recursive(path, depth + 1);
+            continue;
+        }
+        if (!is_supported_image(entry->d_name)) continue;
+
+        /* Track files referenced by a CUE are not separate launch entries;
+         * a .bin without a matching CUE remains launchable on its own. */
+        if (is_data_track_extension(path) &&
+            path_is_referenced(path, g_track_references, g_track_reference_count)) {
+            continue;
+        }
+
+        /* In a multi-disc M3U, list the playlist once rather than each disc
+         * again as a separate library entry. */
+        if (!is_playlist(path) &&
+            path_is_referenced(path, g_playlist_references, g_playlist_reference_count)) {
+            continue;
+        }
+
+        rom = &g_roms[g_rom_count];
+        snprintf(rom->path, sizeof(rom->path), "%s", path);
+        snprintf(rom->name, sizeof(rom->name), "%s", path + strlen(GAMES_DIR) + 1);
+        ++g_rom_count;
+    }
+    closedir(dir);
+}
+
 static void scan_games(void)
 {
-    DIR *dir;
-    struct dirent *entry;
+    struct stat st;
     g_rom_count = 0;
     g_rom_selected = 0;
+    g_track_reference_count = 0;
+    g_playlist_reference_count = 0;
 
-    dir = opendir(GAMES_DIR);
-    if (!dir) {
+    if (stat(GAMES_DIR, &st) != 0 || !S_ISDIR(st.st_mode)) {
         set_status("Cannot open games folder. Check SD-card access.");
         return;
     }
 
-    while ((entry = readdir(dir)) != NULL && g_rom_count < MAX_ROMS) {
-        struct stat st;
-        RomEntry *rom;
-        if (entry->d_name[0] == '.' || !is_supported_image(entry->d_name)) {
-            continue;
-        }
-        rom = &g_roms[g_rom_count];
-        snprintf(rom->name, sizeof(rom->name), "%s", entry->d_name);
-        snprintf(rom->path, sizeof(rom->path), "%s/%s", GAMES_DIR, entry->d_name);
-        if (stat(rom->path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            continue;
-        }
-        ++g_rom_count;
-    }
-    closedir(dir);
+    /* Collect CUE and M3U references first, so library order can't cause
+     * a .bin track to be shown before its .cue is discovered. */
+    collect_references_recursive(GAMES_DIR, 0);
+    scan_games_recursive(GAMES_DIR, 0);
     qsort(g_roms, g_rom_count, sizeof(g_roms[0]), compare_roms);
 
     if (g_rom_count == 0) {
-        set_status("No supported PS1 images found. Add .cue, .chd, .pbp, .iso or .img files.");
+        set_status("No games found. Supported formats: BIN/CUE, CHD, PBP, ISO, IMG, MDF, TOC, CBN, M3U and PS-X EXE.");
     } else {
         set_status("Found %u game image(s). Select one with the GamePad.", g_rom_count);
     }
@@ -383,6 +640,7 @@ static bool core_environment(unsigned command, void *data)
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
@@ -653,13 +911,14 @@ static int16_t analog_value(float value)
 
 static void input_poll(void)
 {
-    VPADRead(VPAD_CHAN_0, &g_vpad, 1, &g_vpad_error);
+    /* The outer app loop samples VPAD once per frame. Reuse that exact sample
+     * for every libretro input query within retro_run(). */
 }
 
 static int16_t input_state(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     uint32_t hold = g_vpad.hold;
-    if (port != 0) {
+    if (g_suppress_game_input || port != 0) {
         return 0;
     }
 
@@ -829,11 +1088,11 @@ static void draw_game(void)
         OSScreenPutFontEx(SCREEN_TV, 2, 2, "Waiting for PS1 video...");
         OSScreenPutFontEx(SCREEN_DRC, 2, 2, "Waiting for PS1 video...");
     }
+    OSScreenPutFontEx(SCREEN_DRC, 2, 26, "Save: ZL+ZR+Plus | Load: ZL+ZR+Minus");
     OSScreenPutFontEx(SCREEN_DRC, 2, 28, "Hold L + R + - to return to library");
     if (g_message_frames > 0 && g_message[0]) {
         OSScreenPutFontEx(SCREEN_TV, 2, 2, g_message);
         OSScreenPutFontEx(SCREEN_DRC, 2, 2, g_message);
-        --g_message_frames;
     }
 }
 
@@ -854,40 +1113,257 @@ static void cycle_option(CoreOption *option, int direction)
     save_settings();
 }
 
+static bool build_game_sidecar_path(const char *directory, const char *extension,
+                                    char *out, size_t out_size)
+{
+    char safe_name[MAX_ROM_PATH];
+    const char *relative;
+    size_t i, out_pos = 0;
+    char *last_dot;
+
+    if (g_current_game_path[0] == '\0' || strlen(GAMES_DIR) >= strlen(g_current_game_path)) {
+        return false;
+    }
+    relative = g_current_game_path + strlen(GAMES_DIR);
+    if (*relative == '/') ++relative;
+
+    for (i = 0; relative[i] != '\0' && out_pos + 1 < sizeof(safe_name); ++i) {
+        unsigned char c = (unsigned char)relative[i];
+        if (c == '/' || c == '\\') {
+            safe_name[out_pos++] = '_';
+        } else if (c < 32 || c == ':' || c == '*' || c == '?' ||
+                   c == '"' || c == '<' || c == '>' || c == '|') {
+            safe_name[out_pos++] = '_';
+        } else {
+            safe_name[out_pos++] = (char)c;
+        }
+    }
+    safe_name[out_pos] = '\0';
+    last_dot = strrchr(safe_name, '.');
+    if (last_dot) *last_dot = '\0';
+    if (safe_name[0] == '\0') {
+        snprintf(safe_name, sizeof(safe_name), "game");
+    }
+    return snprintf(out, out_size, "%s/%s%s", directory, safe_name, extension) < (int)out_size;
+}
+
+static uint32_t hash_bytes(const void *data, size_t size)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t hash = 2166136261u;
+    size_t i;
+    for (i = 0; i < size; ++i) {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static void load_memory_card(void)
+{
+    void *data = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    FILE *fp;
+    long file_size;
+
+    g_last_card_hash = 0;
+    g_autosave_frames = 0;
+    g_memory_card_path[0] = '\0';
+    if (!data || size == 0 ||
+        !build_game_sidecar_path(MEMCARDS_DIR, ".srm",
+                                 g_memory_card_path, sizeof(g_memory_card_path))) {
+        return;
+    }
+
+    fp = fopen(g_memory_card_path, "rb");
+    if (fp) {
+        if (fseek(fp, 0, SEEK_END) == 0) {
+            file_size = ftell(fp);
+            rewind(fp);
+            if (file_size == (long)size) {
+                if (fread(data, 1, size, fp) == size) {
+                    show_message("Loaded memory card: %s", g_current_game_label);
+                }
+            } else {
+                set_status("Ignoring invalid memory-card file for %s.", g_current_game_label);
+            }
+        }
+        fclose(fp);
+    }
+    g_last_card_hash = hash_bytes(data, size);
+}
+
+static void save_memory_card(bool force)
+{
+    void *data = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    uint32_t hash;
+    FILE *fp;
+
+    if (!g_game_loaded || !data || size == 0 || g_memory_card_path[0] == '\0') {
+        return;
+    }
+    hash = hash_bytes(data, size);
+    if (!force && hash == g_last_card_hash) return;
+
+    fp = fopen(g_memory_card_path, "wb");
+    if (!fp) {
+        show_message("Cannot write memory card. Check SD-card permissions.");
+        return;
+    }
+    if (fwrite(data, 1, size, fp) != size) {
+        fclose(fp);
+        show_message("Memory-card write failed.");
+        return;
+    }
+    fclose(fp);
+    g_last_card_hash = hash;
+}
+
+static bool save_state_to_disk(void)
+{
+    size_t size = retro_serialize_size();
+    void *buffer;
+    FILE *fp;
+    bool ok;
+
+    if (!g_game_loaded || size == 0 || size > (16u * 1024u * 1024u) ||
+        !build_game_sidecar_path(STATES_DIR, ".state", g_state_path, sizeof(g_state_path))) {
+        show_message("Cannot save state for this game.");
+        return false;
+    }
+    buffer = malloc(size);
+    if (!buffer) {
+        show_message("Not enough memory for a save state.");
+        return false;
+    }
+    if (!retro_serialize(buffer, size)) {
+        free(buffer);
+        show_message("The PS1 core could not create a save state.");
+        return false;
+    }
+    fp = fopen(g_state_path, "wb");
+    if (!fp) {
+        free(buffer);
+        show_message("Cannot write save state. Check SD-card permissions.");
+        return false;
+    }
+    ok = fwrite(buffer, 1, size, fp) == size;
+    fclose(fp);
+    free(buffer);
+    if (ok) {
+        show_message("State saved: %s", g_current_game_label);
+    } else {
+        show_message("Save-state write failed.");
+    }
+    return ok;
+}
+
+static bool load_state_from_disk(void)
+{
+    size_t size = retro_serialize_size();
+    void *buffer;
+    FILE *fp;
+    long file_size;
+    bool ok = false;
+
+    if (!g_game_loaded || size == 0 || size > (16u * 1024u * 1024u) ||
+        !build_game_sidecar_path(STATES_DIR, ".state", g_state_path, sizeof(g_state_path))) {
+        show_message("Cannot load state for this game.");
+        return false;
+    }
+    fp = fopen(g_state_path, "rb");
+    if (!fp) {
+        show_message("No save state found for %s.", g_current_game_label);
+        return false;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        show_message("Could not read save state.");
+        return false;
+    }
+    file_size = ftell(fp);
+    rewind(fp);
+    if (file_size != (long)size) {
+        fclose(fp);
+        show_message("Save state size does not match this core build.");
+        return false;
+    }
+
+    buffer = malloc(size);
+    if (!buffer) {
+        fclose(fp);
+        show_message("Not enough memory to load a save state.");
+        return false;
+    }
+    if (fread(buffer, 1, size, fp) == size) {
+        ok = retro_unserialize(buffer, size);
+    }
+    fclose(fp);
+    free(buffer);
+    if (ok) {
+        audio_reset();
+        g_last_card_hash = 0;
+        load_memory_card();
+        show_message("State loaded: %s", g_current_game_label);
+    } else {
+        show_message("The PS1 core rejected this save state.");
+    }
+    return ok;
+}
+
 static void launch_selected_game(void)
 {
     struct retro_game_info game = { 0 };
     struct retro_system_av_info av_info;
+
     if (g_rom_count == 0 || g_rom_selected >= g_rom_count) {
         set_status("No game selected. Add your own PS1 image files to games/.");
         return;
     }
 
+    snprintf(g_current_game_path, sizeof(g_current_game_path), "%s", g_roms[g_rom_selected].path);
+    snprintf(g_current_game_label, sizeof(g_current_game_label), "%s", g_roms[g_rom_selected].name);
+    g_memory_card_path[0] = '\0';
+    g_state_path[0] = '\0';
     audio_reset();
     g_frame_valid = false;
-    game.path = g_roms[g_rom_selected].path;
+
+    /* Request the DualShock profile so PCSX-ReARMed actually polls both
+     * analog sticks instead of leaving the virtual pad in digital-only mode. */
+    retro_set_controller_port_device(0, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1));
+    game.path = g_current_game_path;
     if (!retro_load_game(&game)) {
-        set_status("Could not load %s. Check the image and BIOS settings.", g_roms[g_rom_selected].name);
+        set_status("Could not load %s. Check the image and BIOS settings.", g_current_game_label);
+        g_current_game_path[0] = '\0';
+        g_current_game_label[0] = '\0';
         return;
     }
 
     g_game_loaded = true;
     g_mode = SCREEN_GAME;
+    load_memory_card();
     retro_get_system_av_info(&av_info);
     if (av_info.timing.sample_rate > 0.0) {
         audio_set_sample_rate((unsigned)av_info.timing.sample_rate);
     }
-    set_status("Loaded %s", g_roms[g_rom_selected].name);
+    set_status("Loaded %s", g_current_game_label);
 }
 
 static void leave_game(void)
 {
     if (g_game_loaded) {
+        save_memory_card(true);
         retro_unload_game();
         g_game_loaded = false;
     }
     audio_reset();
     g_frame_valid = false;
+    g_suppress_game_input = false;
+    g_current_game_path[0] = '\0';
+    g_current_game_label[0] = '\0';
+    g_memory_card_path[0] = '\0';
+    g_state_path[0] = '\0';
     g_mode = SCREEN_LIBRARY;
     scan_games();
 }
@@ -984,15 +1460,33 @@ int main(void)
     frame_budget = OSMillisecondsToTicks(16);
     while (WHBProcIsRunning()) {
         uint64_t start = OSGetTime();
-        VPADRead(VPAD_CHAN_0, &g_vpad, 1, &g_vpad_error);
+        const uint32_t hold = (uint32_t)g_vpad.hold;
+        const uint32_t save_mask = VPAD_BUTTON_ZL | VPAD_BUTTON_ZR | VPAD_BUTTON_PLUS;
+        const uint32_t load_mask = VPAD_BUTTON_ZL | VPAD_BUTTON_ZR | VPAD_BUTTON_MINUS;
+        const uint32_t exit_mask = VPAD_BUTTON_L | VPAD_BUTTON_R | VPAD_BUTTON_MINUS;
+        const bool save_down = (hold & save_mask) == save_mask;
+        const bool load_down = (hold & load_mask) == load_mask;
+        const bool exit_down = (hold & exit_mask) == exit_mask;
 
+        VPADRead(VPAD_CHAN_0, &g_vpad, 1, &g_vpad_error);
         if (g_mode == SCREEN_GAME && g_game_loaded) {
-            if ((g_vpad.hold & (VPAD_BUTTON_L | VPAD_BUTTON_R | VPAD_BUTTON_MINUS)) ==
-                (VPAD_BUTTON_L | VPAD_BUTTON_R | VPAD_BUTTON_MINUS)) {
+            g_suppress_game_input = save_down || load_down || exit_down;
+
+            if (save_down && !g_save_combo_was_down) {
+                save_state_to_disk();
+            } else if (load_down && !g_load_combo_was_down) {
+                load_state_from_disk();
+            }
+            g_save_combo_was_down = save_down;
+            g_load_combo_was_down = load_down;
+
+            if (exit_down) {
                 ++exit_chord_frames;
                 if (exit_chord_frames >= 45) {
                     leave_game();
                     exit_chord_frames = 0;
+                    g_save_combo_was_down = false;
+                    g_load_combo_was_down = false;
                 }
             } else {
                 exit_chord_frames = 0;
@@ -1000,11 +1494,17 @@ int main(void)
 
             if (g_mode == SCREEN_GAME && g_game_loaded) {
                 retro_run();
+                if ((++g_autosave_frames % 120u) == 0u) {
+                    save_memory_card(false);
+                }
                 draw_game();
             } else {
                 draw_menu();
             }
         } else {
+            g_suppress_game_input = false;
+            g_save_combo_was_down = false;
+            g_load_combo_was_down = false;
             handle_menu_input();
             draw_menu();
         }
@@ -1022,6 +1522,7 @@ int main(void)
     }
 
     if (g_game_loaded) {
+        save_memory_card(true);
         retro_unload_game();
         g_game_loaded = false;
     }

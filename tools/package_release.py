@@ -16,7 +16,7 @@ DIST.mkdir(parents=True)
 (STAGE / "wiiu" / "apps" / "PS1WiiU").mkdir(parents=True)
 
 app_dir = STAGE / "wiiu" / "apps"
-for folder in ("games", "bios", "saves", "memcards", "screenshots"):
+for folder in ("games", "bios", "saves", "memcards", "states", "screenshots"):
     target = app_dir / "PS1WiiU" / folder
     target.mkdir(parents=True, exist_ok=True)
     (target / ".gitkeep").write_text("Folder reserved for PS1WiiU user data.\n", encoding="utf-8")
@@ -43,6 +43,6 @@ if not (app_dir / "PS1WiiU.wuhb").exists() and not (app_dir / "PS1WiiU.rpx").exi
 with zipfile.ZipFile(ARCHIVE, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for path in sorted(STAGE.rglob("*")):
         if path.is_file():
-            archive.write(path, path.relative_to(DIST))
+            archive.write(path, path.relative_to(STAGE))
 
-print(f"Packaged {ARCHIVE}")
+print(f"Packaged {ARCHIVE} (ZIP root contains wiiu/ for direct SD-card extraction)")
