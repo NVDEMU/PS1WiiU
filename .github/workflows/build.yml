@@ -20,13 +20,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Apply Wii U build compatibility patch
-        run: |
-          cd vendor/pcsx_rearmed
-          git apply ../../patches/pcsx-rearmed-wiiu-pointer-casts.patch
-
       - name: Build PCSX-ReARMed core for Wii U
-        run: make -C vendor/pcsx_rearmed -f Makefile.libretro platform=wiiu
+        run: ./tools/build_core.sh
 
       - name: Configure WUT build
         run: |
