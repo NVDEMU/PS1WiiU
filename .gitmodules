@@ -1,0 +1,3 @@
+[submodule "vendor/pcsx_rearmed"]
+	path = vendor/pcsx_rearmed
+	url = https://github.com/notaz/pcsx_rearmed.git
