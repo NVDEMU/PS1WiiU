@@ -36,6 +36,7 @@
 #define STATES_DIR    APP_DIR "/states"
 #define SCREENSHOTS_DIR APP_DIR "/screenshots"
 #define SETTINGS_PATH APP_DIR "/settings.cfg"
+#define BOOT_LOG_PATH APP_DIR "/boot.log"
 
 #define MAX_REFERENCED_FILES 1024
 #define MAX_SCAN_DEPTH 4
@@ -180,6 +181,28 @@ void wiiu_clear_cache(void *start, void *end)
     OSMemoryBarrier();
     ICInvalidateRange(start, length);
     OSMemoryBarrier();
+}
+
+static void boot_log_reset(void)
+{
+    FILE *fp = fopen(BOOT_LOG_PATH, "w");
+    if (!fp) return;
+    fputs("PS1WiiU startup trace\\n", fp);
+    fflush(fp);
+    fclose(fp);
+}
+
+static void boot_log(const char *fmt, ...)
+{
+    FILE *fp = fopen(BOOT_LOG_PATH, "a");
+    va_list args;
+    if (!fp) return;
+    va_start(args, fmt);
+    vfprintf(fp, fmt, args);
+    va_end(args);
+    fputc('\\n', fp);
+    fflush(fp);
+    fclose(fp);
 }
 
 static void set_status(const char *fmt, ...)
@@ -763,10 +786,14 @@ static void audio_init(void)
     AXInitParams params = { 0 };
     params.renderer = AX_INIT_RENDERER_48KHZ;
     params.pipeline = AX_INIT_PIPELINE_SINGLE;
+    boot_log("audio_init: before AXInitWithParams");
     AXInitWithParams(&params);
+    boot_log("audio_init: after AXInitWithParams");
 
     g_audio_left_voice = AXAcquireVoice(31, NULL, NULL);
+    boot_log("audio_init: left voice %s", g_audio_left_voice ? "allocated" : "unavailable");
     g_audio_right_voice = AXAcquireVoice(31, NULL, NULL);
+    boot_log("audio_init: right voice %s", g_audio_right_voice ? "allocated" : "unavailable");
     if (!g_audio_left_voice || !g_audio_right_voice) {
         if (g_audio_left_voice) {
             AXFreeVoice(g_audio_left_voice);
@@ -785,13 +812,16 @@ static void audio_init(void)
     memset(g_audio_right, 0, sizeof(g_audio_right));
     DCStoreRange(g_audio_left, sizeof(g_audio_left));
     DCStoreRange(g_audio_right, sizeof(g_audio_right));
+    boot_log("audio_init: before voice configuration");
     audio_set_voice_mix(g_audio_left_voice, false);
     audio_set_voice_mix(g_audio_right_voice, true);
+    boot_log("audio_init: voice configuration complete");
     g_audio_write_pos = 0;
     g_audio_queued = 0;
     g_audio_started = false;
     g_audio_initialized = true;
     AXRegisterAppFrameCallback(audio_frame_callback);
+    boot_log("audio_init: callback registered successfully");
 }
 
 static void audio_reset(void)
@@ -1422,18 +1452,28 @@ int main(void)
     unsigned exit_chord_frames = 0;
     uint64_t frame_budget;
 
+    boot_log_reset();
+    boot_log("main: entered");
+    boot_log("main: before WHBProcInit");
     WHBProcInit();
+    boot_log("main: after WHBProcInit");
     WHBLogCafeInit();
+    boot_log("main: after WHBLogCafeInit");
     ensure_storage_layout();
+    boot_log("main: storage layout ensured");
     load_settings();
+    boot_log("main: settings loaded");
     scan_games();
+    boot_log("main: game scan complete; games=%u", g_rom_count);
 
     OSScreenInit();
+    boot_log("main: OSScreenInit complete");
     g_tv_buffer_size = OSScreenGetBufferSizeEx(SCREEN_TV);
     g_drc_buffer_size = OSScreenGetBufferSizeEx(SCREEN_DRC);
     g_tv_buffer = memalign(0x100, g_tv_buffer_size);
     g_drc_buffer = memalign(0x100, g_drc_buffer_size);
     if (!g_tv_buffer || !g_drc_buffer) {
+        boot_log("main: video buffer allocation failed (tv=%p, drc=%p)", g_tv_buffer, g_drc_buffer);
         set_status("Out of memory creating video buffers.");
         free(g_tv_buffer);
         free(g_drc_buffer);
@@ -1447,8 +1487,10 @@ int main(void)
     OSScreenSetBufferEx(SCREEN_DRC, g_drc_buffer);
     OSScreenEnableEx(SCREEN_TV, true);
     OSScreenEnableEx(SCREEN_DRC, true);
+    boot_log("main: video buffers configured");
 
     audio_init();
+    boot_log("main: audio_init returned; initialized=%d", g_audio_initialized ? 1 : 0);
 
     retro_set_environment(core_environment);
     retro_set_video_refresh(video_refresh);
@@ -1456,9 +1498,12 @@ int main(void)
     retro_set_audio_sample_batch(audio_sample_batch);
     retro_set_input_poll(input_poll);
     retro_set_input_state(input_state);
+    boot_log("main: before retro_init");
     retro_init();
+    boot_log("main: after retro_init");
 
     frame_budget = OSMillisecondsToTicks(16);
+    boot_log("main: entering application loop");
     while (WHBProcIsRunning()) {
         uint64_t start = OSGetTime();
         uint32_t hold;
@@ -1527,6 +1572,7 @@ int main(void)
         }
     }
 
+    boot_log("main: application loop ended; cleaning up");
     if (g_game_loaded) {
         save_memory_card(true);
         retro_unload_game();
