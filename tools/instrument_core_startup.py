@@ -284,12 +284,34 @@ def instrument_lightrec_map() -> None:
     )
     text = replace_once(
         text,
+        '#include <malloc.h>\n',
+        '#include <malloc.h>\n#include <stdio.h>\n',
+        "virtual range diagnostic formatting declaration"
+    )
+    text = replace_once(
+        text,
         "\tuint32_t avail_va;\n\tuint32_t avail_va_size;\n\tOSGetMapVirtAddrRange(&avail_va, &avail_va_size);\n",
         "\tuint32_t avail_va;\n\tuint32_t avail_va_size;\n"
+        "\tchar range_message[128];\n"
         "\tps1wiiu_core_trace(\"lightrec_init_mmap: before OSGetMapVirtAddrRange\");\n"
         "\tOSGetMapVirtAddrRange(&avail_va, &avail_va_size);\n"
+        "\tsnprintf(range_message, sizeof(range_message), \"lightrec_init_mmap: range base=0x%08x size=0x%08x\", avail_va, avail_va_size);\n"
+        "\tps1wiiu_core_trace(range_message);\n"
         "\tps1wiiu_core_trace(\"lightrec_init_mmap: after OSGetMapVirtAddrRange\");\n",
         "virtual address range query"
+    )
+    text = replace_once(
+        text,
+        "\tif (!avail_va || avail_va_size < 0x20000000)\n\t\tgoto cleanup_allocations;\n",
+        "\tif (!avail_va) {\n"
+        "\t\tps1wiiu_core_trace(\"lightrec_init_mmap: failed because range base is zero\");\n"
+        "\t\tgoto cleanup_allocations;\n\t}\n"
+        "\t/* The final required window is BIOS at +0x1fc00000, size 0x80000. */\n"
+        "\tif (avail_va_size < 0x1fc80000) {\n"
+        "\t\tps1wiiu_core_trace(\"lightrec_init_mmap: range is too small; need 0x1fc80000 bytes\");\n"
+        "\t\tgoto cleanup_allocations;\n\t}\n"
+        "\tps1wiiu_core_trace(\"lightrec_init_mmap: address range is large enough; proceeding with mappings\");\n",
+        "exact virtual-address range validation"
     )
     text = replace_once(
         text,
