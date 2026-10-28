@@ -168,6 +168,12 @@ def instrument_psxinit() -> None:
         return
     text = replace_once(
         text,
+        "int psxInit() {\n",
+        "extern void ps1wiiu_core_trace(const char *message);\n\nint psxInit() {\n",
+        "PSX init trace declaration"
+    )
+    text = replace_once(
+        text,
         "\tif (psxMemInit() == -1) return -1;\n\n\treturn psxCpu->Init();\n}",
         "\tps1wiiu_core_trace(\"psxInit: before psxMemInit\");\n"
         "\tif (psxMemInit() == -1) {\n"
@@ -195,6 +201,8 @@ def instrument_psxmem() -> None:
     text = path.read_text(encoding="utf-8")
     if "psxMemInit: before memory-map backend" in text:
         return
+    start = text.index("int psxMemInit(void)\n{")
+    text = text[:start] + "extern void ps1wiiu_core_trace(const char *message);\n\n" + text[start:]
     start = text.index("int psxMemInit(void)\n{")
     end = text.index("\nvoid psxMemReset()", start)
     section = text[start:end]
