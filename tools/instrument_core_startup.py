@@ -312,7 +312,7 @@ def instrument_lightrec_map() -> None:
     )
     text = replace_once(
         text,
-        "\tcode_buffer = WUP_RWX_MEM_BASE;\n\n\treturn 0;\n",
+        "\tcode_buffer = (void *)(uintptr_t)WUP_RWX_MEM_BASE;\n\n\treturn 0;\n",
         "\tcode_buffer = WUP_RWX_MEM_BASE;\n"
         "\tps1wiiu_core_trace(\"lightrec_init_mmap: complete\");\n\n\treturn 0;\n",
         "Wii U memory-map completion"
