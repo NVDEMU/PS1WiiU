@@ -1,0 +1,28 @@
+diff --git a/libpcsxcore/lightrec/mem_wiiu.c b/libpcsxcore/lightrec/mem_wiiu.c
+--- a/libpcsxcore/lightrec/mem_wiiu.c
++++ b/libpcsxcore/lightrec/mem_wiiu.c
+@@ -4,6 +4,7 @@
+ 
+ #include <coreinit/memorymap.h>
+ #include <malloc.h>
++#include <stdint.h>
+ #include <stdbool.h>
+ 
+ #include "../memmap.h"
+@@ -65,7 +66,7 @@ int lightrec_init_mmap(void) {
+ 	}
+ 	if (i != 4) {
+ 		for (int i = 0; i < 4; i++)
+-			wiiu_unmap(avail_va + 0x200000 * i, 0x200000);
++			wiiu_unmap((void *)(uintptr_t)(avail_va + 0x200000 * i), 0x200000);
+ 		goto cleanup_allocations;
+ 	}
+ 	psxRegs.ptrs.psxM = (void*)avail_va;
+@@ -85,7 +86,7 @@ int lightrec_init_mmap(void) {
+ 		goto cleanup_allocations;
+ 	}
+ 
+-	code_buffer = WUP_RWX_MEM_BASE;
++	code_buffer = (void *)(uintptr_t)WUP_RWX_MEM_BASE;
+ 
+ 	return 0;
