@@ -32,10 +32,22 @@ for source_name, target_name in (
     if source.is_file():
         shutil.copy2(source, STAGE / target_name)
 
+built_files = {}
 for name in ("PS1WiiU.wuhb", "PS1WiiU.rpx"):
     built = BUILD / name
     if not built.is_file():
         raise SystemExit(f"Missing required build output: {built}")
+    data = built.read_bytes()
+    if len(data) < 512 * 1024:
+        raise SystemExit(f"Suspiciously small {name}: {len(data)} bytes (expected at least 512 KiB)")
+    if name.endswith(".rpx") and not data.startswith(b"\\x7fELF"):
+        raise SystemExit(f"Invalid RPX header in {built}")
+    if name.endswith(".wuhb"):
+        if not data.startswith(b"WUHB"):
+            raise SystemExit(f"Invalid WUHB header in {built}")
+        if b"\\x7fELF" not in data[:4096]:
+            raise SystemExit(f"WUHB does not contain an embedded RPX ELF near its header: {built}")
+    built_files[name] = len(data)
     shutil.copy2(built, app_dir / name)
 
 with zipfile.ZipFile(ARCHIVE, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -58,5 +70,8 @@ with zipfile.ZipFile(ARCHIVE, "r") as archive:
         raise SystemExit(f"SD-card ZIP is incomplete; missing: {sorted(missing)}")
     if any(name.startswith("PS1WiiU-SD/") for name in names):
         raise SystemExit("ZIP has an extra PS1WiiU-SD/ wrapper; extract it to the SD root instead.")
+
+for name, size in sorted(built_files.items()):
+    print(f"Validated {name}: {size:,} bytes ({size / (1024 * 1024):.2f} MiB)")
 
 print(f"Packaged and verified {ARCHIVE} (ZIP root contains wiiu/ for direct SD-card extraction)")
