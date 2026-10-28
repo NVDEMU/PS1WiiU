@@ -30,34 +30,38 @@ def instrument_libretro() -> None:
         "#include <libretro.h>\n\nextern void ps1wiiu_core_trace(const char *message);\n",
         "libretro trace declaration"
     )
-    text = replace_once(
-        text,
+    start = text.index("void retro_init(void)\n{")
+    end = text.index("\nvoid retro_deinit(void)", start)
+    section = text[start:end]
+
+    section = replace_once(
+        section,
         "void retro_init(void)\n{\n   unsigned dci_version = 0;",
         "void retro_init(void)\n{\n   ps1wiiu_core_trace(\"retro_init: entered\");\n   unsigned dci_version = 0;",
         "retro_init entry"
     )
-    text = replace_once(
-        text, "   log_mem_usage(0);\n",
+    section = replace_once(
+        section, "   log_mem_usage(0);\n",
         "   log_mem_usage(0);\n   ps1wiiu_core_trace(\"retro_init: after log_mem_usage\");\n",
         "memory logger"
     )
-    text = replace_once(
-        text,
+    section = replace_once(
+        section,
         "   msg_interface_version = 0;\n   environ_cb(RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, &msg_interface_version);\n",
         "   msg_interface_version = 0;\n   ps1wiiu_core_trace(\"retro_init: before environment message-interface query\");\n"
         "   environ_cb(RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, &msg_interface_version);\n"
         "   ps1wiiu_core_trace(\"retro_init: after environment message-interface query\");\n",
         "message-interface query"
     )
-    text = replace_once(
-        text, "   ret = emu_core_preinit();\n",
+    section = replace_once(
+        section, "   ret = emu_core_preinit();\n",
         "   ps1wiiu_core_trace(\"retro_init: before emu_core_preinit\");\n"
         "   ret = emu_core_preinit();\n"
         "   ps1wiiu_core_trace(\"retro_init: after emu_core_preinit\");\n",
         "emu_core_preinit"
     )
-    text = replace_once(
-        text, "   init_memcards();\n\n   ret |= emu_core_init();\n",
+    section = replace_once(
+        section, "   init_memcards();\n\n   ret |= emu_core_init();\n",
         "   ps1wiiu_core_trace(\"retro_init: before init_memcards\");\n"
         "   init_memcards();\n"
         "   ps1wiiu_core_trace(\"retro_init: after init_memcards\");\n\n"
@@ -66,40 +70,39 @@ def instrument_libretro() -> None:
         "   ps1wiiu_core_trace(\"retro_init: returned from emu_core_init\");\n",
         "core init"
     )
-    text = replace_once(
-        text, "   if (ret != 0)\n   {\n      LogErr(\"PCSX init failed.\\n\");",
+    section = replace_once(
+        section, "   if (ret != 0)\n   {\n      LogErr(\"PCSX init failed.\\n\");",
         "   if (ret != 0)\n   {\n      ps1wiiu_core_trace(\"retro_init: emu_core_init returned an error\");\n"
         "      LogErr(\"PCSX init failed.\\n\");",
         "core init error"
     )
-    text = replace_once(
-        text, "   size_t vout_buf_size = VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT * 4;\n",
+    section = replace_once(
+        section, "   size_t vout_buf_size = VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT * 4;\n",
         "   size_t vout_buf_size = VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT * 4;\n"
         "   ps1wiiu_core_trace(\"retro_init: before output-buffer allocation\");\n",
         "output buffer allocation start"
     )
-    text = replace_once(
-        text, "   if (vout_buf == NULL)\n",
+    section = replace_once(
+        section, "   if (vout_buf == NULL)\n",
         "   ps1wiiu_core_trace(vout_buf ? \"retro_init: output-buffer allocation succeeded\" : \"retro_init: output-buffer allocation failed\");\n"
         "   if (vout_buf == NULL)\n",
         "output buffer allocation result"
     )
-    text = replace_once(
-        text, "   loadPSXBios();\n",
+    section = replace_once(
+        section, "   loadPSXBios();\n",
         "   ps1wiiu_core_trace(\"retro_init: before BIOS discovery\");\n"
         "   loadPSXBios();\n"
         "   ps1wiiu_core_trace(\"retro_init: after BIOS discovery\");\n",
         "BIOS discovery"
     )
-    text = replace_once(
-        text, "   check_system_specs();\n}\n\nvoid retro_deinit(void)",
+    section = replace_once(
+        section, "   check_system_specs();\n}",
         "   check_system_specs();\n"
-        "   ps1wiiu_core_trace(\"retro_init: completed successfully\");\n"
-        "}\n\nvoid retro_deinit(void)",
+        "   ps1wiiu_core_trace(\"retro_init: completed successfully\");\n}",
         "retro_init completion"
     )
+    text = text[:start] + section + text[end:]
     LIBRETRO.write_text(text, encoding="utf-8")
-
 def instrument_main() -> None:
     text = MAIN.read_text(encoding="utf-8")
     if "ps1wiiu_core_trace" not in text:
