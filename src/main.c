@@ -730,6 +730,12 @@ static void draw_text_both(const char *text, unsigned tv_x, unsigned tv_y,
     OSScreenPutFontEx(SCREEN_DRC, drc_x, drc_y, text);
 }
 
+static void draw_next_both(const char *text, unsigned *line)
+{
+    draw_text_both(text, 2, *line, 2, *line);
+    ++(*line);
+}
+
 static void draw_menu(void)
 {
     unsigned i;
@@ -749,9 +755,9 @@ static void draw_menu(void)
         snprintf(text, sizeof(text), "Games: %u / %u", g_rom_count, MAX_ROMS);
         draw_text_both(text, 2, line++, 2, line - 1);
         if (g_rom_count == 0) {
-            draw_text_both("Place your own .cue, .chd, .pbp, .iso or .img files in:", 2, line++, 2, line - 1);
-            draw_text_both(GAMES_DIR, 2, line++, 2, line - 1);
-            draw_text_both("Press Y to scan again.", 2, line++, 2, line - 1);
+            draw_next_both("Place your own .cue, .chd, .pbp, .iso or .img files in:", &line);
+            draw_next_both(GAMES_DIR, &line);
+            draw_next_both("Press Y to scan again.", &line);
         } else {
             unsigned first = g_rom_selected >= 7 ? g_rom_selected - 7 : 0;
             unsigned end = first + MENU_ROWS;
@@ -780,12 +786,12 @@ static void draw_menu(void)
         }
         draw_text_both("Settings take effect when the next game is loaded.", 2, 25, 2, 25);
     } else {
-        draw_text_both("Emulation core: PCSX-ReARMed (GPL-2.0-or-later)", 2, line++, 2, line - 1);
-        draw_text_both("GamePad controls: D-pad / left stick to navigate.", 2, line++, 2, line - 1);
-        draw_text_both("A: confirm    X: change tab    Y: rescan games", 2, line++, 2, line - 1);
-        draw_text_both("PS Cross=A, Circle=B, Square=Y, Triangle=X.", 2, line++, 2, line - 1);
-        draw_text_both("BIOS files: " BIOS_DIR, 2, line++, 2, line - 1);
-        draw_text_both("Game files: " GAMES_DIR, 2, line++, 2, line - 1);
+        draw_next_both("Emulation core: PCSX-ReARMed (GPL-2.0-or-later)", &line);
+        draw_next_both("GamePad controls: D-pad to navigate; left stick in games.", &line);
+        draw_next_both("A: confirm    X: change tab    Y: rescan games", &line);
+        draw_next_both("PS Cross=A, Circle=B, Square=Y, Triangle=X.", &line);
+        draw_next_both("BIOS files are read from the BIOS folder.", &line);
+        draw_next_both(GAMES_DIR, &line);
     }
 
     if (g_status[0]) {
