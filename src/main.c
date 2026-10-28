@@ -187,7 +187,7 @@ static void boot_log_reset(void)
 {
     FILE *fp = fopen(BOOT_LOG_PATH, "w");
     if (!fp) return;
-    fputs("PS1WiiU startup trace\\n", fp);
+    fputs("PS1WiiU startup trace\n", fp);
     fflush(fp);
     fclose(fp);
 }
@@ -200,7 +200,7 @@ static void boot_log(const char *fmt, ...)
     va_start(args, fmt);
     vfprintf(fp, fmt, args);
     va_end(args);
-    fputc('\\n', fp);
+    fputc('\n', fp);
     fflush(fp);
     fclose(fp);
 }
