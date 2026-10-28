@@ -134,6 +134,28 @@ static volatile bool g_audio_started = false;
 static bool g_audio_initialized = false;
 static unsigned g_audio_rate = 44100;
 
+/*
+ * PCSX-ReARMed's Lightrec backend calls this Wii U-specific executable-cache
+ * hook after it writes generated machine code. Flush data cache lines before
+ * invalidating instruction-cache lines so the CPU fetches the new code.
+ */
+void wiiu_clear_cache(void *start, void *end)
+{
+    uintptr_t begin = (uintptr_t)start;
+    uintptr_t finish = (uintptr_t)end;
+    uint32_t length;
+
+    if (finish <= begin || finish - begin > UINT32_MAX) {
+        return;
+    }
+
+    length = (uint32_t)(finish - begin);
+    DCFlushRange(start, length);
+    OSMemoryBarrier();
+    ICInvalidateRange(start, length);
+    OSMemoryBarrier();
+}
+
 static void set_status(const char *fmt, ...)
 {
     va_list args;
