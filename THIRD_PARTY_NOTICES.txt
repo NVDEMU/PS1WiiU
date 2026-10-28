@@ -1,0 +1,11 @@
+PS1WiiU bundles PCSX-ReARMed as a git submodule at vendor/pcsx_rearmed.
+Upstream: https://github.com/notaz/pcsx_rearmed
+Pinned upstream commit: 8b6c163575e6ce9a0537553e0d4ed4225315955e
+License: GNU General Public License version 2 or (at your option) any later version.
+The PCSX-ReARMed source tree includes its own COPYING file and upstream notices.
+
+PCSX-ReARMed and its dependencies are distributed under their respective licenses.
+Source code and dependency provenance are available in the PS1WiiU repository and its pinned submodules.
+
+No PlayStation BIOS, commercial game image, or other copyrighted game content is distributed with PS1WiiU.
+Users must supply game images and any optional BIOS files that they are legally entitled to use.
