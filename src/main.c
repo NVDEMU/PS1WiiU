@@ -753,7 +753,7 @@ static void draw_menu(void)
 
     if (g_mode == SCREEN_LIBRARY) {
         snprintf(text, sizeof(text), "Games: %u / %u", g_rom_count, MAX_ROMS);
-        draw_text_both(text, 2, line++, 2, line - 1);
+        draw_next_both(text, &line);
         if (g_rom_count == 0) {
             draw_next_both("Place your own .cue, .chd, .pbp, .iso or .img files in:", &line);
             draw_next_both(GAMES_DIR, &line);
@@ -774,7 +774,7 @@ static void draw_menu(void)
         }
         draw_text_both("A: Launch   Y: Rescan   X: Settings   B: About", 2, 25, 2, 25);
     } else if (g_mode == SCREEN_SETTINGS) {
-        draw_text_both("A / Left / Right: change option; settings persist on SD.", 2, line++, 2, line - 1);
+        draw_next_both("A / Left / Right: change option; settings persist on SD.", &line);
         for (i = 0; i < OPTION_COUNT && i < 17; ++i) {
             snprintf(text, sizeof(text), "%c %-27s : %s",
                      i == g_setting_selected ? '>' : ' ',
