@@ -105,65 +105,72 @@ def instrument_libretro() -> None:
     LIBRETRO.write_text(text, encoding="utf-8")
 def instrument_main() -> None:
     text = MAIN.read_text(encoding="utf-8")
+    if 'emu_core_init: completed successfully' in text:
+        print("PCSX-ReARMed frontend main startup trace already installed")
+        return
     if "ps1wiiu_core_trace" not in text:
         text = replace_once(
             text, '#include "main.h"\n',
             '#include "main.h"\n\nextern void ps1wiiu_core_trace(const char *message);\n',
             "frontend main trace declaration"
         )
-    if 'emu_core_preinit: returned from emu_set_default_config' in text:
-        print("PCSX-ReARMed frontend main startup trace already installed")
-        MAIN.write_text(text, encoding="utf-8")
-        return
 
-    text = replace_once(
-        text, "int emu_core_preinit(void)\n{\n",
-        'int emu_core_preinit(void)\n{\n   ps1wiiu_core_trace("emu_core_preinit: entered");\n',
+    pre_start = text.index("int emu_core_preinit(void)\n{")
+    pre_end = text.index("\nint emu_core_init(void)", pre_start)
+    pre = text[pre_start:pre_end]
+    pre = replace_once(
+        pre, "int emu_core_preinit(void)\n{\n",
+        'int emu_core_preinit(void)\n{\n\tps1wiiu_core_trace("emu_core_preinit: entered");\n',
         "emu_core_preinit entry"
     )
-    text = replace_once(
-        text, "   SetIsoFile(NULL);\n\n   memset(&Config, 0, sizeof(Config));\n\n   set_default_paths();\n   emu_set_default_config();\n",
-        "   ps1wiiu_core_trace(\"emu_core_preinit: before SetIsoFile\");\n"
-        "   SetIsoFile(NULL);\n"
-        "   ps1wiiu_core_trace(\"emu_core_preinit: after SetIsoFile\");\n\n"
-        "   memset(&Config, 0, sizeof(Config));\n"
-        "   ps1wiiu_core_trace(\"emu_core_preinit: after clearing Config\");\n\n"
-        "   ps1wiiu_core_trace(\"emu_core_preinit: before set_default_paths\");\n"
-        "   set_default_paths();\n"
-        "   ps1wiiu_core_trace(\"emu_core_preinit: after set_default_paths\");\n"
-        "   ps1wiiu_core_trace(\"emu_core_preinit: before emu_set_default_config\");\n"
-        "   emu_set_default_config();\n"
-        "   ps1wiiu_core_trace(\"emu_core_preinit: returned from emu_set_default_config\");\n",
+    pre = replace_once(
+        pre,
+        "\tSetIsoFile(NULL);\n\n\tmemset(&Config, 0, sizeof(Config));\n\n\tset_default_paths();\n\temu_set_default_config();\n",
+        "\tps1wiiu_core_trace(\"emu_core_preinit: before SetIsoFile\");\n"
+        "\tSetIsoFile(NULL);\n"
+        "\tps1wiiu_core_trace(\"emu_core_preinit: after SetIsoFile\");\n\n"
+        "\tmemset(&Config, 0, sizeof(Config));\n"
+        "\tps1wiiu_core_trace(\"emu_core_preinit: after clearing Config\");\n\n"
+        "\tps1wiiu_core_trace(\"emu_core_preinit: before set_default_paths\");\n"
+        "\tset_default_paths();\n"
+        "\tps1wiiu_core_trace(\"emu_core_preinit: after set_default_paths\");\n"
+        "\tps1wiiu_core_trace(\"emu_core_preinit: before emu_set_default_config\");\n"
+        "\temu_set_default_config();\n"
+        "\tps1wiiu_core_trace(\"emu_core_preinit: returned from emu_set_default_config\");\n",
         "emu_core_preinit stages"
     )
-    text = replace_once(
-        text, "int emu_core_init(void)\n{\n",
-        'int emu_core_init(void)\n{\n   ps1wiiu_core_trace("emu_core_init: entered");\n',
+    text = text[:pre_start] + pre + text[pre_end:]
+
+    init_start = text.index("int emu_core_init(void)\n{")
+    init_end = text.index("\nvoid emu_core_ask_exit(void)", init_start)
+    init = text[init_start:init_end]
+    init = replace_once(
+        init, "int emu_core_init(void)\n{\n",
+        'int emu_core_init(void)\n{\n\tps1wiiu_core_trace("emu_core_init: entered");\n',
         "emu_core_init entry"
     )
-    text = replace_once(
-        text, "   if (EmuInit() == -1) {\n",
-        "   ps1wiiu_core_trace(\"emu_core_init: before EmuInit/psxInit\");\n"
-        "   if (EmuInit() == -1) {\n",
+    init = replace_once(
+        init, "\tif (EmuInit() == -1) {\n",
+        "\tps1wiiu_core_trace(\"emu_core_init: before EmuInit/psxInit\");\n"
+        "\tif (EmuInit() == -1) {\n"
+        "\t\tps1wiiu_core_trace(\"emu_core_init: EmuInit/psxInit failed\");\n",
         "EmuInit start"
     )
-    text = replace_once(
-        text, "   LoadMcds(Config.Mcd1, Config.Mcd2);\n",
-        "   ps1wiiu_core_trace(\"emu_core_init: EmuInit/psxInit succeeded\");\n"
-        "   ps1wiiu_core_trace(\"emu_core_init: before LoadMcds\");\n"
-        "   LoadMcds(Config.Mcd1, Config.Mcd2);\n"
-        "   ps1wiiu_core_trace(\"emu_core_init: after LoadMcds\");\n",
+    init = replace_once(
+        init, "\tLoadMcds(Config.Mcd1, Config.Mcd2);\n",
+        "\tps1wiiu_core_trace(\"emu_core_init: EmuInit/psxInit succeeded\");\n"
+        "\tps1wiiu_core_trace(\"emu_core_init: before LoadMcds\");\n"
+        "\tLoadMcds(Config.Mcd1, Config.Mcd2);\n"
+        "\tps1wiiu_core_trace(\"emu_core_init: after LoadMcds\");\n",
         "memory card initialization"
     )
-    text = replace_once(
-        text, "   return 0;\n}\n\nvoid emu_core_ask_exit(void)",
-        '   ps1wiiu_core_trace("emu_core_init: completed successfully");\n'
-        "   return 0;\n}\n\nvoid emu_core_ask_exit(void)",
+    init = replace_once(
+        init, "\treturn 0;\n}",
+        '\tps1wiiu_core_trace("emu_core_init: completed successfully");\n\treturn 0;\n}',
         "emu_core_init completion"
     )
+    text = text[:init_start] + init + text[init_end:]
     MAIN.write_text(text, encoding="utf-8")
-
-
 def instrument_psxinit() -> None:
     path = CORE / "libpcsxcore" / "r3000a.c"
     text = path.read_text(encoding="utf-8")
