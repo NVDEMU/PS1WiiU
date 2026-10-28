@@ -291,7 +291,7 @@ def instrument_lightrec_map() -> None:
     text = replace_once(
         text,
         "\tuint32_t avail_va;\n\tuint32_t avail_va_size;\n\tOSGetMapVirtAddrRange(&avail_va, &avail_va_size);\n",
-        "\tuint32_t avail_va;\n\tuint32_t avail_va_size;\n"
+        "\tuint32_t avail_va = 0;\n\tuint32_t avail_va_size = 0;\n"
         "\tchar range_message[128];\n"
         "\tps1wiiu_core_trace(\"lightrec_init_mmap: before OSGetMapVirtAddrRange\");\n"
         "\tOSGetMapVirtAddrRange(&avail_va, &avail_va_size);\n"
