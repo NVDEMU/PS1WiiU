@@ -322,11 +322,6 @@ static bool core_environment(unsigned command, void *data)
     case RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY:
         *(const char **)data = GAMES_DIR;
         return true;
-#ifdef RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY
-    case RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY:
-        *(const char **)data = APP_DIR;
-        return true;
-#endif
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         struct retro_variable *variable = (struct retro_variable *)data;
         int index = option_index(variable->key);
