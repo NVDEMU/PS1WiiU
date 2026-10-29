@@ -244,6 +244,70 @@ def instrument_load_game() -> None:
     text = text[:start] + section + text[end:]
     LIBRETRO.write_text(text, encoding="utf-8")
 
+def instrument_runtime_video() -> None:
+    """Trace early interpreter execution and the framebuffer handed to libretro."""
+    text = LIBRETRO.read_text(encoding="utf-8")
+    if "ps1wiiu_run_trace_count" in text:
+        print("PCSX-ReARMed execution/video trace already installed")
+        return
+
+    start = text.index("void retro_run(void)\n{")
+    end = text.index("\n// see Config.Bios", start)
+    section = text[start:end]
+
+    section = replace_once(
+        section,
+        "void retro_run(void)\n{\n",
+        "void retro_run(void)\n{\n"
+        "   static unsigned ps1wiiu_run_trace_count = 0;\n"
+        "   char ps1wiiu_run_trace_message[160];\n",
+        "retro_run execution trace entry",
+    )
+    section = replace_once(
+        section,
+        "   psxCpu->Execute(&psxRegs);\n\n   if (pl_rearmed_cbs.fskip_dirty) {",
+        "   if (ps1wiiu_run_trace_count < 8) {\n"
+        "      snprintf(ps1wiiu_run_trace_message, sizeof(ps1wiiu_run_trace_message),\n"
+        "            \"retro_run #%u: before Execute pc=0x%08x cycle=0x%08x\",\n"
+        "            ps1wiiu_run_trace_count + 1, (unsigned)psxRegs.pc, (unsigned)psxRegs.cycle);\n"
+        "      ps1wiiu_core_trace(ps1wiiu_run_trace_message);\n"
+        "   }\n"
+        "   psxCpu->Execute(&psxRegs);\n"
+        "   if (ps1wiiu_run_trace_count < 8) {\n"
+        "      snprintf(ps1wiiu_run_trace_message, sizeof(ps1wiiu_run_trace_message),\n"
+        "            \"retro_run #%u: after Execute pc=0x%08x cycle=0x%08x\",\n"
+        "            ps1wiiu_run_trace_count + 1, (unsigned)psxRegs.pc, (unsigned)psxRegs.cycle);\n"
+        "      ps1wiiu_core_trace(ps1wiiu_run_trace_message);\n"
+        "   }\n\n"
+        "   if (pl_rearmed_cbs.fskip_dirty) {",
+        "retro_run CPU execution trace",
+    )
+    section = replace_once(
+        section,
+        "   video_cb((vout_fb_dirty || !vout_can_dupe) ? vout_buf_ptr : NULL,\n"
+        "        vout_width, vout_height, vout_pitch_b);\n"
+        "   vout_fb_dirty = 0;\n",
+        "   if (ps1wiiu_run_trace_count < 8) {\n"
+        "      snprintf(ps1wiiu_run_trace_message, sizeof(ps1wiiu_run_trace_message),\n"
+        "            \"retro_run #%u: video data=%p size=%ux%u pitch=%zu dirty=%d can_dupe=%d\",\n"
+        "            ps1wiiu_run_trace_count + 1,\n"
+        "            (void *)((vout_fb_dirty || !vout_can_dupe) ? vout_buf_ptr : NULL),\n"
+        "            vout_width, vout_height, (size_t)vout_pitch_b, vout_fb_dirty, vout_can_dupe);\n"
+        "      ps1wiiu_core_trace(ps1wiiu_run_trace_message);\n"
+        "   }\n"
+        "   video_cb((vout_fb_dirty || !vout_can_dupe) ? vout_buf_ptr : NULL,\n"
+        "        vout_width, vout_height, vout_pitch_b);\n"
+        "   if (ps1wiiu_run_trace_count < 8)\n"
+        "      ps1wiiu_core_trace(\"retro_run: after video callback\");\n"
+        "   ++ps1wiiu_run_trace_count;\n"
+        "   vout_fb_dirty = 0;\n",
+        "retro_run video callback trace",
+    )
+
+    text = text[:start] + section + text[end:]
+    LIBRETRO.write_text(text, encoding="utf-8")
+
+
 def instrument_main() -> None:
     text = MAIN.read_text(encoding="utf-8")
     if 'emu_core_init: completed successfully' in text:
@@ -700,6 +764,7 @@ if not LIBRETRO.is_file() or not MAIN.is_file():
 
 instrument_libretro()
 instrument_load_game()
+instrument_runtime_video()
 instrument_main()
 instrument_psxinit()
 instrument_psxmem()
