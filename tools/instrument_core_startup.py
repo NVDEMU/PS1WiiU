@@ -285,7 +285,7 @@ def instrument_runtime_video() -> None:
     section = replace_once(
         section,
         "   video_cb((vout_fb_dirty || !vout_can_dupe) ? vout_buf_ptr : NULL,\n"
-        "        vout_width, vout_height, vout_pitch_b);\n"
+        "       vout_width, vout_height, vout_pitch_b);\n"
         "   vout_fb_dirty = 0;\n",
         "   if (ps1wiiu_run_trace_count < 8) {\n"
         "      snprintf(ps1wiiu_run_trace_message, sizeof(ps1wiiu_run_trace_message),\n"
@@ -296,7 +296,7 @@ def instrument_runtime_video() -> None:
         "      ps1wiiu_core_trace(ps1wiiu_run_trace_message);\n"
         "   }\n"
         "   video_cb((vout_fb_dirty || !vout_can_dupe) ? vout_buf_ptr : NULL,\n"
-        "        vout_width, vout_height, vout_pitch_b);\n"
+        "       vout_width, vout_height, vout_pitch_b);\n"
         "   if (ps1wiiu_run_trace_count < 8)\n"
         "      ps1wiiu_core_trace(\"retro_run: after video callback\");\n"
         "   ++ps1wiiu_run_trace_count;\n"
