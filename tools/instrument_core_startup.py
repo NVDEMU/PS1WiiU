@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "vendor" / "pcsx_rearmed"
 LIBRETRO = CORE / "frontend" / "libretro.c"
 MAIN = CORE / "frontend" / "main.c"
+MISC = CORE / "libpcsxcore" / "misc.c"
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     count = text.count(old)
@@ -759,6 +760,109 @@ def patch_cemu_software_map_fallback() -> None:
         )
         plugin.write_text(text, encoding="utf-8")
 
+def instrument_cd_boot() -> None:
+    """Trace whether the core selects BIOS boot or manually loads the disc executable."""
+    text = MISC.read_text(encoding="utf-8")
+    if "ps1wiiu_boot_trace: entered" in text:
+        print("PCSX-ReARMed disc-boot trace already installed")
+        return
+
+    text = replace_once(
+        text,
+        "int LoadCdromMainExe(const char *exe_save_path) {\n",
+        "extern void ps1wiiu_core_trace(const char *message);\n\n"
+        "int LoadCdromMainExe(const char *exe_save_path) {\n",
+        "disc-boot trace declaration",
+    )
+    start = text.index("int LoadCdromMainExe(const char *exe_save_path) {\n")
+    end = text.index("\nint LoadCdromFile(", start)
+    section = text[start:end]
+
+    section = replace_once(
+        section,
+        "int i, ret;\n\n\t save_counter = 0;",
+        "int i, ret;\n\n\t save_counter = 0;",
+        "disc-boot placeholder",
+    ) if False else section
+
+    section = replace_once(
+        section,
+        "int i, ret;\n\n\tsave_counter = 0;\n",
+        "int i, ret;\n"
+        "\tchar ps1wiiu_boot_trace[192];\n\n"
+        "\tsave_counter = 0;\n"
+        "\tsnprintf(ps1wiiu_boot_trace, sizeof(ps1wiiu_boot_trace),\n"
+        "\t\t\"ps1wiiu_boot_trace: entered HLE=%d PC=0x%08x\",\n"
+        "\t\tConfig.HLE ? 1 : 0, (unsigned)psxRegs.pc);\n"
+        "\tps1wiiu_core_trace(ps1wiiu_boot_trace);\n",
+        "disc-boot entry",
+    )
+    section = replace_once(
+        section,
+        "\tif (!Config.HLE && !exe_save_path) {\n"
+        "\t\tif (psxRegs.pc != 0x80030000) // BiosBootBypass'ed or custom BIOS?\n"
+        "\t\t\treturn 0;\n"
+        "\t\tif (Config.SlowBoot)\n"
+        "\t\t\treturn 0;\n"
+        "\t}\n",
+        "\tif (!Config.HLE && !exe_save_path) {\n"
+        "\t\tif (psxRegs.pc != 0x80030000) { // BiosBootBypass'ed or custom BIOS?\n"
+        "\t\t\tps1wiiu_core_trace(\"LoadCdromMainExe: delegating boot to real BIOS\");\n"
+        "\t\t\treturn 0;\n"
+        "\t\t}\n"
+        "\t\tif (Config.SlowBoot) {\n"
+        "\t\t\tps1wiiu_core_trace(\"LoadCdromMainExe: slow BIOS boot enabled; skipping manual load\");\n"
+        "\t\t\treturn 0;\n"
+        "\t\t}\n"
+        "\t}\n",
+        "disc-boot BIOS decision",
+    )
+    section = replace_once(
+        section,
+        "\tREADDIR(mdir);\n\n\t// Load SYSTEM.CNF and scan for the main executable\n",
+        "\tREADDIR(mdir);\n"
+        "\tps1wiiu_core_trace(\"LoadCdromMainExe: root directory read; checking boot files\");\n\n"
+        "\t// Load SYSTEM.CNF and scan for the main executable\n",
+        "disc-boot root directory",
+    )
+    section = replace_once(
+        section,
+        "\t\tif (GetCdromFile(mdir, time, \"PSX.EXE;1\") == -1) return -1;\n",
+        "\t\tif (GetCdromFile(mdir, time, \"PSX.EXE;1\") == -1) {\n"
+        "\t\t\tps1wiiu_core_trace(\"LoadCdromMainExe: SYSTEM.CNF and PSX.EXE not found\");\n"
+        "\t\t\treturn -1;\n"
+        "\t\t}\n",
+        "disc-boot fallback executable",
+    )
+    section = replace_once(
+        section,
+        "\tSetBootRegs(tmpHead.h.pc0, tmpHead.h.gp0, sp);\n",
+        "\tSetBootRegs(tmpHead.h.pc0, tmpHead.h.gp0, sp);\n"
+        "\tsnprintf(ps1wiiu_boot_trace, sizeof(ps1wiiu_boot_trace),\n"
+        "\t\t\"LoadCdromMainExe: set entry PC=0x%08x load=0x%08x size=0x%08x\",\n"
+        "\t\t(unsigned)tmpHead.h.pc0, (unsigned)tmpHead.h.t_addr, (unsigned)tmpHead.h.t_size);\n"
+        "\tps1wiiu_core_trace(ps1wiiu_boot_trace);\n",
+        "disc-boot entry point",
+    )
+    section = replace_once(
+        section,
+        "\tif (save_file)\n"
+        "\t\tfclose(save_file);\n\n"
+        "\treturn 0;\n}",
+        "\tif (save_file)\n"
+        "\t\tfclose(save_file);\n\n"
+        "\tsnprintf(ps1wiiu_boot_trace, sizeof(ps1wiiu_boot_trace),\n"
+        "\t\t\"LoadCdromMainExe: manual load complete PC=0x%08x HLE=%d\",\n"
+        "\t\t(unsigned)psxRegs.pc, Config.HLE ? 1 : 0);\n"
+        "\tps1wiiu_core_trace(ps1wiiu_boot_trace);\n"
+        "\treturn 0;\n}",
+        "disc-boot completion",
+    )
+
+    text = text[:start] + section + text[end:]
+    MISC.write_text(text, encoding="utf-8")
+
+
 def patch_cemu_hle_boot() -> None:
     """Use PCSX-ReARMed's HLE BIOS when Cemu cannot provide the fixed PSX memory map."""
     text = LIBRETRO.read_text(encoding="utf-8")
@@ -793,6 +897,7 @@ if not LIBRETRO.is_file() or not MAIN.is_file():
 instrument_libretro()
 instrument_load_game()
 instrument_runtime_video()
+instrument_cd_boot()
 instrument_main()
 instrument_psxinit()
 instrument_psxmem()
