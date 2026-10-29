@@ -506,24 +506,24 @@ def patch_cemu_interpreter_option() -> None:
         return
 
     old = (
-        '    if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))\n'
-        '       var.value = "enabled";\n\n'
-        '    {\n'
-        '       R3000Acpu *prev_cpu = psxCpu;\n'
+        '   if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))\n'
+        '      var.value = "enabled";\n\n'
+        '   {\n'
+        '      R3000Acpu *prev_cpu = psxCpu;\n'
     )
     new = (
-        '    if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))\n'
-        '       var.value = "enabled";\n\n'
+        '   if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))\n'
+        '      var.value = "enabled";\n\n'
         '#ifdef HW_WUP\n'
-        '    /* PS1WiiU fallback keeps Lightrec disabled after custom-map failure. */\n'
-        '    extern int lightrec_custom_map_active;\n'
-        '    if (!lightrec_custom_map_active) {\n'
-        '       var.value = "disabled";\n'
-        '       ps1wiiu_core_trace("update_variables: disabled Lightrec after software-map fallback");\n'
-        '    }\n'
+        '   /* PS1WiiU fallback keeps Lightrec disabled after custom-map failure. */\n'
+        '   extern int lightrec_custom_map_active;\n'
+        '   if (!lightrec_custom_map_active) {\n'
+        '      var.value = "disabled";\n'
+        '      ps1wiiu_core_trace("update_variables: disabled Lightrec after software-map fallback");\n'
+        '   }\n'
         '#endif\n\n'
-        '    {\n'
-        '       R3000Acpu *prev_cpu = psxCpu;\n'
+        '   {\n'
+        '      R3000Acpu *prev_cpu = psxCpu;\n'
     )
     text = replace_once(text, old, new, "force interpreter after Cemu memory-map fallback")
     LIBRETRO.write_text(text, encoding="utf-8")
