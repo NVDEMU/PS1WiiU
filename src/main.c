@@ -148,6 +148,8 @@ static unsigned g_frame_width = 0;
 static unsigned g_frame_height = 0;
 static unsigned g_frame_pitch = 0;
 static bool g_frame_valid = false;
+static unsigned g_video_refresh_trace_count = 0;
+static unsigned g_draw_game_trace_count = 0;
 
 static VPADStatus g_vpad;
 static VPADReadError g_vpad_error = VPAD_READ_NO_SAMPLES;
@@ -686,20 +688,28 @@ static bool core_environment(unsigned command, void *data)
 static void video_refresh(const void *data, unsigned width, unsigned height,
                           size_t pitch)
 {
-    unsigned pixel_size;
+    unsigned trace_index = g_video_refresh_trace_count++;
+    unsigned pixel_size = (g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888) ? 4u : 2u;
     size_t bytes;
+    if (trace_index < 8) {
+        boot_log("video_refresh #%u: data=%p size=%ux%u pitch=%zu format=%u",
+                 trace_index + 1, data, width, height, pitch, (unsigned)g_pixel_format);
+    }
     if (!data) {
+        if (trace_index < 8) boot_log("video_refresh: core supplied a duplicate/null frame");
         return;
     }
     if (!width || !height || width > MAX_FRAME_WIDTH || height > MAX_FRAME_HEIGHT) {
+        if (trace_index < 8) boot_log("video_refresh: rejected invalid dimensions %ux%u", width, height);
         return;
     }
-    pixel_size = (g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888) ? 4u : 2u;
     if (pitch < (size_t)width * pixel_size || pitch > MAX_FRAME_WIDTH * 4u) {
+        if (trace_index < 8) boot_log("video_refresh: rejected pitch=%zu for width=%u pixel_size=%u", pitch, width, pixel_size);
         return;
     }
     bytes = pitch * height;
     if (bytes > sizeof(g_frame_buffer)) {
+        if (trace_index < 8) boot_log("video_refresh: rejected oversized frame bytes=%zu capacity=%zu", bytes, sizeof(g_frame_buffer));
         return;
     }
     memcpy(g_frame_buffer, data, bytes);
@@ -707,6 +717,39 @@ static void video_refresh(const void *data, unsigned width, unsigned height,
     g_frame_height = height;
     g_frame_pitch = (unsigned)pitch;
     g_frame_valid = true;
+
+    if (trace_index < 3) {
+        const uint8_t *src = (const uint8_t *)data;
+        unsigned step_x = width / 32u;
+        unsigned step_y = height / 32u;
+        unsigned x, y, sampled = 0, nonblack = 0;
+        uint32_t first_pixel = 0;
+        if (step_x == 0) step_x = 1;
+        if (step_y == 0) step_y = 1;
+        if (pixel_size == 4u) {
+            memcpy(&first_pixel, src, sizeof(first_pixel));
+        } else {
+            uint16_t first16;
+            memcpy(&first16, src, sizeof(first16));
+            first_pixel = first16;
+        }
+        for (y = 0; y < height; y += step_y) {
+            for (x = 0; x < width; x += step_x) {
+                if (pixel_size == 4u) {
+                    uint32_t value;
+                    memcpy(&value, src + (size_t)y * pitch + (size_t)x * 4u, sizeof(value));
+                    if ((value & 0x00ffffffu) != 0) ++nonblack;
+                } else {
+                    uint16_t value;
+                    memcpy(&value, src + (size_t)y * pitch + (size_t)x * 2u, sizeof(value));
+                    if ((value & (g_pixel_format == RETRO_PIXEL_FORMAT_0RGB1555 ? 0x7fffu : 0xffffu)) != 0) ++nonblack;
+                }
+                ++sampled;
+            }
+        }
+        boot_log("video_refresh: copied frame %ux%u; first_pixel=0x%08x sampled_nonblack=%u/%u",
+                 width, height, first_pixel, nonblack, sampled);
+    }
 }
 
 static void audio_set_voice_mix(AXVoice *voice, bool right_channel)
@@ -1117,6 +1160,13 @@ static void draw_menu(void)
 
 static void draw_game(void)
 {
+    if (g_draw_game_trace_count < 8) {
+        boot_log("draw_game #%u: frame_valid=%u size=%ux%u pitch=%u format=%u tv_buffer=%p drc_buffer=%p",
+                 g_draw_game_trace_count + 1, g_frame_valid ? 1u : 0u,
+                 g_frame_width, g_frame_height, g_frame_pitch, (unsigned)g_pixel_format,
+                 g_tv_buffer, g_drc_buffer);
+    }
+    ++g_draw_game_trace_count;
     OSScreenClearBufferEx(SCREEN_TV, 0x00000000);
     OSScreenClearBufferEx(SCREEN_DRC, 0x00000000);
     if (g_frame_valid) {
