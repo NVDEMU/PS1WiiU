@@ -759,6 +759,34 @@ def patch_cemu_software_map_fallback() -> None:
         )
         plugin.write_text(text, encoding="utf-8")
 
+def patch_cemu_hle_boot() -> None:
+    """Use PCSX-ReARMed's HLE BIOS when Cemu cannot provide the fixed PSX memory map."""
+    text = LIBRETRO.read_text(encoding="utf-8")
+    marker = "PS1WiiU fallback uses HLE BIOS to bypass Cemu BIOS boot stalls"
+    if marker in text:
+        print("Cemu HLE BIOS fallback already installed")
+        return
+
+    old = (
+        "   Config.SlowBoot = 0;\n"
+        "   if (!use_hle)\n"
+    )
+    new = (
+        "#ifdef HW_WUP\n"
+        "   /* PS1WiiU fallback uses HLE BIOS to bypass Cemu BIOS boot stalls. */\n"
+        "   extern int lightrec_custom_map_active;\n"
+        "   if (!lightrec_custom_map_active) {\n"
+        "      use_hle = true;\n"
+        "      ps1wiiu_core_trace(\"BIOS selection: forcing HLE after custom-map failure\");\n"
+        "   }\n"
+        "#endif\n\n"
+        "   Config.SlowBoot = 0;\n"
+        "   if (!use_hle)\n"
+    )
+    text = replace_once(text, old, new, "force HLE BIOS when Cemu uses software memory maps")
+    LIBRETRO.write_text(text, encoding="utf-8")
+
+
 if not LIBRETRO.is_file() or not MAIN.is_file():
     raise SystemExit("PCSX-ReARMed source files are missing; check out submodules first.")
 
@@ -770,5 +798,5 @@ instrument_psxinit()
 instrument_psxmem()
 instrument_lightrec_map()
 patch_cemu_software_map_fallback()
-patch_cemu_interpreter_option()
+patch_cemu_hle_boot()
 print("PCSX-ReARMed startup instrumentation and Cemu fallback are ready")
