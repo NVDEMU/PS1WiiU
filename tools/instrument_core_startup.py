@@ -498,6 +498,37 @@ def instrument_lightrec_map() -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_cemu_interpreter_option() -> None:
+    """Do not let option refresh re-enable Lightrec when Cemu needs software maps."""
+    text = LIBRETRO.read_text(encoding="utf-8")
+    marker = "PS1WiiU fallback keeps Lightrec disabled after custom-map failure"
+    if marker in text:
+        return
+
+    old = (
+        '    if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))\n'
+        '       var.value = "enabled";\n\n'
+        '    {\n'
+        '       R3000Acpu *prev_cpu = psxCpu;\n'
+    )
+    new = (
+        '    if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))\n'
+        '       var.value = "enabled";\n\n'
+        '#ifdef HW_WUP\n'
+        '    /* PS1WiiU fallback keeps Lightrec disabled after custom-map failure. */\n'
+        '    extern int lightrec_custom_map_active;\n'
+        '    if (!lightrec_custom_map_active) {\n'
+        '       var.value = "disabled";\n'
+        '       ps1wiiu_core_trace("update_variables: disabled Lightrec after software-map fallback");\n'
+        '    }\n'
+        '#endif\n\n'
+        '    {\n'
+        '       R3000Acpu *prev_cpu = psxCpu;\n'
+    )
+    text = replace_once(text, old, new, "force interpreter after Cemu memory-map fallback")
+    LIBRETRO.write_text(text, encoding="utf-8")
+
+
 def patch_cemu_software_map_fallback() -> None:
     """Keep the real Wii U fast mapping, but fall back to software maps when Cemu lacks the mapping-range API."""
     mem_h = CORE / "libpcsxcore" / "lightrec" / "mem.h"
@@ -674,4 +705,5 @@ instrument_psxinit()
 instrument_psxmem()
 instrument_lightrec_map()
 patch_cemu_software_map_fallback()
+patch_cemu_interpreter_option()
 print("PCSX-ReARMed startup instrumentation and Cemu fallback are ready")
