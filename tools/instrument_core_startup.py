@@ -864,11 +864,11 @@ def instrument_cd_boot() -> None:
 
 
 def patch_cemu_hle_boot() -> None:
-    """Use PCSX-ReARMed's HLE BIOS when Cemu cannot provide the fixed PSX memory map."""
+    """Log BIOS selection without overriding it when the custom memory map fails."""
     text = LIBRETRO.read_text(encoding="utf-8")
-    marker = "PS1WiiU fallback uses HLE BIOS to bypass Cemu BIOS boot stalls"
+    marker = "PS1WiiU logs BIOS selection without forcing HLE after custom-map failure"
     if marker in text:
-        print("Cemu HLE BIOS fallback already installed")
+        print("BIOS selection diagnostics already installed")
         return
 
     old = (
@@ -876,18 +876,14 @@ def patch_cemu_hle_boot() -> None:
         "   if (!use_hle)\n"
     )
     new = (
-        "#ifdef HW_WUP\n"
-        "   /* PS1WiiU fallback uses HLE BIOS to bypass Cemu BIOS boot stalls. */\n"
-        "   extern int lightrec_custom_map_active;\n"
-        "   if (!lightrec_custom_map_active) {\n"
-        "      use_hle = true;\n"
-        "      ps1wiiu_core_trace(\"BIOS selection: forcing HLE after custom-map failure\");\n"
-        "   }\n"
-        "#endif\n\n"
+        "   /* PS1WiiU: a failed custom map selects the interpreter, not HLE. */\n"
+        "   /* Preserve PCSX-ReARMed's normal BIOS file detection and Auto setting. */\n"
+        '   ps1wiiu_core_trace("PS1WiiU logs BIOS selection without forcing HLE after custom-map failure");\n'
+        '   ps1wiiu_core_trace(use_hle ? "BIOS selection result: HLE" : "BIOS selection result: real BIOS");\n'
         "   Config.SlowBoot = 0;\n"
         "   if (!use_hle)\n"
     )
-    text = replace_once(text, old, new, "force HLE BIOS when Cemu uses software memory maps")
+    text = replace_once(text, old, new, "log BIOS selection without forcing HLE")
     LIBRETRO.write_text(text, encoding="utf-8")
 
 
