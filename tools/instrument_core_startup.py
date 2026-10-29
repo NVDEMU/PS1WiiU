@@ -103,6 +103,147 @@ def instrument_libretro() -> None:
     )
     text = text[:start] + section + text[end:]
     LIBRETRO.write_text(text, encoding="utf-8")
+def instrument_load_game() -> None:
+    text = LIBRETRO.read_text(encoding="utf-8")
+    if 'ps1wiiu_load_trace: entered' in text:
+        print("PCSX-ReARMed game-load trace already installed")
+        return
+
+    start = text.index("bool retro_load_game(const struct retro_game_info *info)\n{")
+    end = text.index("\nunsigned retro_get_region(void)", start)
+    section = text[start:end]
+
+    replacements = [
+        (
+            "bool retro_load_game(const struct retro_game_info *info)\n{\n   size_t i;",
+            "bool retro_load_game(const struct retro_game_info *info)\n{\n   ps1wiiu_core_trace(\"ps1wiiu_load_trace: entered\");\n   size_t i;",
+            "retro_load_game entry",
+        ),
+        (
+            "   update_variables(false);\n",
+            "   ps1wiiu_core_trace(\"retro_load_game: before update_variables\");\n"
+            "   update_variables(false);\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after update_variables\");\n",
+            "game-load variable update",
+        ),
+        (
+            "   disk_init();\n",
+            "   ps1wiiu_core_trace(\"retro_load_game: before disk_init\");\n"
+            "   disk_init();\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after disk_init\");\n",
+            "game-load disk initialization",
+        ),
+        (
+            "   extract_directory(base_dir, info->path, sizeof(base_dir));\n",
+            "   ps1wiiu_core_trace(\"retro_load_game: before extract_directory\");\n"
+            "   extract_directory(base_dir, info->path, sizeof(base_dir));\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after extract_directory\");\n",
+            "game-load base directory",
+        ),
+        (
+            "      disk_count = 1;\n      disks[0].fname = strdup(info->path);\n\n      get_disk_label(disk_label, info->path, PATH_MAX);\n      disks[0].flabel = strdup(disk_label);\n",
+            "      disk_count = 1;\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: before disk path allocation\");\n"
+            "      disks[0].fname = strdup(info->path);\n"
+            "      ps1wiiu_core_trace(disks[0].fname ? \"retro_load_game: disk path allocation succeeded\" : \"retro_load_game: disk path allocation failed\");\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: before get_disk_label\");\n"
+            "      get_disk_label(disk_label, info->path, PATH_MAX);\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: after get_disk_label\");\n"
+            "      disks[0].flabel = strdup(disk_label);\n"
+            "      ps1wiiu_core_trace(disks[0].flabel ? \"retro_load_game: disk label allocation succeeded\" : \"retro_load_game: disk label allocation failed\");\n",
+            "game-load path and label allocation",
+        ),
+        (
+            "   set_cd_image(disks[cd_index].fname);\n   disk_current_index = cd_index;\n\n   /* have to reload after set_cd_image for correct cdr plugin */",
+            "   ps1wiiu_core_trace(\"retro_load_game: before set_cd_image\");\n"
+            "   set_cd_image(disks[cd_index].fname);\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after set_cd_image\");\n"
+            "   disk_current_index = cd_index;\n\n   /* have to reload after set_cd_image for correct cdr plugin */",
+            "game-load CD image selection",
+        ),
+        (
+            "   if (LoadPlugins() == -1)\n   {\n      LogErr(\"failed to load plugins\\n\");",
+            "   ps1wiiu_core_trace(\"retro_load_game: before LoadPlugins\");\n"
+            "   if (LoadPlugins() == -1)\n   {\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: LoadPlugins failed\");\n"
+            "      LogErr(\"failed to load plugins\\n\");",
+            "game-load plugin initialization",
+        ),
+        (
+            "   if (!strncmp(info->path, \"cdrom:\", 6))",
+            "   ps1wiiu_core_trace(\"retro_load_game: LoadPlugins succeeded\");\n"
+            "   if (!strncmp(info->path, \"cdrom:\", 6))",
+            "game-load plugin initialization result",
+        ),
+        (
+            "   if (OpenPlugins(0) == -1)\n   {\n      LogErr(\"failed to open plugins\\n\");",
+            "   ps1wiiu_core_trace(\"retro_load_game: before OpenPlugins\");\n"
+            "   if (OpenPlugins(0) == -1)\n   {\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: OpenPlugins failed\");\n"
+            "      LogErr(\"failed to open plugins\\n\");",
+            "game-load plugin opening",
+        ),
+        (
+            "   /* Handle multi-disk images (i.e. PBP)",
+            "   ps1wiiu_core_trace(\"retro_load_game: OpenPlugins succeeded\");\n\n"
+            "   /* Handle multi-disk images (i.e. PBP)",
+            "game-load plugin opening result",
+        ),
+        (
+            "      if (CheckCdrom() == -1)\n      {\n         LogErr(\"unsupported/invalid CD image: %s\\n\", info->path);",
+            "      ps1wiiu_core_trace(\"retro_load_game: before CheckCdrom\");\n"
+            "      if (CheckCdrom() == -1)\n      {\n"
+            "         ps1wiiu_core_trace(\"retro_load_game: CheckCdrom rejected image\");\n"
+            "         LogErr(\"unsupported/invalid CD image: %s\\n\", info->path);",
+            "game-load CD validation",
+        ),
+        (
+            "   load_memcards();\n   plugin_call_rearmed_cbs();\n   SysReset();\n",
+            "   ps1wiiu_core_trace(\"retro_load_game: before load_memcards\");\n"
+            "   load_memcards();\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after load_memcards\");\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: before plugin_call_rearmed_cbs\");\n"
+            "   plugin_call_rearmed_cbs();\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after plugin_call_rearmed_cbs\");\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: before SysReset\");\n"
+            "   SysReset();\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after SysReset\");\n",
+            "game-load reset sequence",
+        ),
+        (
+            "   else\n      ret = LoadCdromMainExe(NULL);\n",
+            "   else\n   {\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: before LoadCdromMainExe\");\n"
+            "      ret = LoadCdromMainExe(NULL);\n"
+            "      ps1wiiu_core_trace(\"retro_load_game: after LoadCdromMainExe\");\n"
+            "   }\n",
+            "game-load main executable",
+        ),
+        (
+            "   emu_on_new_cd(0);\n\n   set_retro_memmap();",
+            "   ps1wiiu_core_trace(\"retro_load_game: before emu_on_new_cd\");\n"
+            "   emu_on_new_cd(0);\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after emu_on_new_cd\");\n\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: before set_retro_memmap\");\n"
+            "   set_retro_memmap();\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: after set_retro_memmap\");",
+            "game-load memory map",
+        ),
+        (
+            "   show_enabled_hacks();\n\n   return true;\n}",
+            "   show_enabled_hacks();\n"
+            "   ps1wiiu_core_trace(\"retro_load_game: completed successfully\");\n\n"
+            "   return true;\n}",
+            "game-load completion",
+        ),
+    ]
+
+    for old, new, label in replacements:
+        section = replace_once(section, old, new, label)
+
+    text = text[:start] + section + text[end:]
+    LIBRETRO.write_text(text, encoding="utf-8")
+
 def instrument_main() -> None:
     text = MAIN.read_text(encoding="utf-8")
     if 'emu_core_init: completed successfully' in text:
@@ -527,6 +668,7 @@ if not LIBRETRO.is_file() or not MAIN.is_file():
     raise SystemExit("PCSX-ReARMed source files are missing; check out submodules first.")
 
 instrument_libretro()
+instrument_load_game()
 instrument_main()
 instrument_psxinit()
 instrument_psxmem()
