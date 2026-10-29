@@ -37,6 +37,7 @@
 #define SCREENSHOTS_DIR APP_DIR "/screenshots"
 #define SETTINGS_PATH APP_DIR "/settings.cfg"
 #define BOOT_LOG_PATH APP_DIR "/boot.log"
+#define PS1WIIU_BUILD_ID "bios-auto-fix-verify-1"
 
 #define MAX_REFERENCED_FILES 1024
 #define MAX_SCAN_DEPTH 4
@@ -1518,6 +1519,7 @@ int main(void)
     uint64_t frame_budget;
 
     boot_log_reset();
+    boot_log("build: %s", PS1WIIU_BUILD_ID);
     boot_log("main: entered");
     boot_log("main: before WHBProcInit");
     WHBProcInit();
